@@ -112,6 +112,7 @@ private:
 
   // Diagnostics from ARKODE
   int nsteps{0};
+  int nff_evals{0};
   int nfe_evals{0};
   int nfi_evals{0};
   int nniters{0};

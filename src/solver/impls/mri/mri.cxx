@@ -1,7 +1,6 @@
 /**************************************************************************
- * Experimental interface to SUNDIALS ARKode IMEX solver
- *
- * NOTE: ARKode is still in beta testing so use with cautious optimism
+ * Interface to ARKODE's multirate infinitesimal (MRI) solver
+ * NOTE: This requires SUNDIALS version 5 or newer.
  *
  **************************************************************************
  * Copyright 2010 B.D.Dudson, S.Farley, M.V.Umansky, X.Q.Xu
@@ -51,16 +50,16 @@
 
 class Field2D;
 
-static int arkode_rhs_fast(BoutReal t, N_Vector u, N_Vector du, void* user_data);
-static int arkode_rhs_explicit(BoutReal t, N_Vector u, N_Vector du, void* user_data);
-static int arkode_rhs_implicit(BoutReal t, N_Vector u, N_Vector du, void* user_data);
+static int mri_rhs_fast(BoutReal t, N_Vector u, N_Vector du, void* user_data);
+static int mri_rhs_explicit(BoutReal t, N_Vector u, N_Vector du, void* user_data);
+static int mri_rhs_implicit(BoutReal t, N_Vector u, N_Vector du, void* user_data);
 
-static int arkode_bbd_rhs(sunindextype Nlocal, BoutReal t, N_Vector u, N_Vector du,
+static int mri_bbd_rhs(sunindextype Nlocal, BoutReal t, N_Vector u, N_Vector du,
                           void* user_data);
-static int arkode_pre(BoutReal t, N_Vector yy, N_Vector yp, N_Vector rvec, N_Vector zvec,
+static int mri_pre(BoutReal t, N_Vector yy, N_Vector yp, N_Vector rvec, N_Vector zvec,
                       BoutReal gamma, BoutReal delta, int lr, void* user_data);
 
-static int arkode_jac(N_Vector v, N_Vector Jv, BoutReal t, N_Vector y, N_Vector fy,
+static int mri_jac(N_Vector v, N_Vector Jv, BoutReal t, N_Vector y, N_Vector fy,
                       void* user_data, N_Vector tmp);
 
 MriSolver::MriSolver(Options* opts)
@@ -97,16 +96,19 @@ MriSolver::MriSolver(Options* opts)
   has_constraints = false; // This solver doesn't have constraints
 
   // Add diagnostics to output
-  add_int_diagnostic(nsteps, "arkode_nsteps", "Cumulative number of internal steps");
-  add_int_diagnostic(nfe_evals, "arkode_nfe_evals",
+  add_int_diagnostic(nsteps, "mri_nsteps", "Cumulative number of internal steps");
+  add_int_diagnostic(nff_evals, "mri_nff_evals",
+                     "No. of calls to ff (fast portion of the right-hand-side "
+                     "function) function");
+  add_int_diagnostic(nfe_evals, "mri_nfe_evals",
                      "No. of calls to fe (explicit portion of the right-hand-side "
                      "function) function");
-  add_int_diagnostic(nfi_evals, "arkode_nfi_evals",
+  add_int_diagnostic(nfi_evals, "mri_nfi_evals",
                      "No. of calls to fi (implicit portion of the right-hand-side "
                      "function) function");
-  add_int_diagnostic(nniters, "arkode_nniters", "No. of nonlinear solver iterations");
-  add_int_diagnostic(npevals, "arkode_npevals", "No. of preconditioner evaluations");
-  add_int_diagnostic(nliters, "arkode_nliters", "No. of linear iterations");
+  add_int_diagnostic(nniters, "mri_nniters", "No. of nonlinear solver iterations");
+  add_int_diagnostic(npevals, "mri_npevals", "No. of preconditioner evaluations");
+  add_int_diagnostic(nliters, "mri_nliters", "No. of linear iterations");
 }
 
 MriSolver::~MriSolver() {
@@ -149,7 +151,7 @@ int MriSolver::init() {
   // Put the variables into uvec
   save_vars(N_VGetArrayPointer(uvec));
 
-  arkode_mem = callWithSUNContext(MRIStepCreate, suncontext, arkode_rhs_explicit, arkode_rhs_implicit,
+  arkode_mem = callWithSUNContext(MRIStepCreate, suncontext, mri_rhs_explicit, mri_rhs_implicit,
                                   simtime, uvec, nullptr);
   if (arkode_mem == nullptr) {
     throw BoutException("MRIStepCreate failed\n");
@@ -203,7 +205,7 @@ int MriSolver::init() {
       if (hasPreconditioner()) {
         output.write("\tUsing user-supplied preconditioner\n");
 
-        if (MRIStepSetPreconditioner(arkode_mem, nullptr, arkode_pre) != ARKLS_SUCCESS) {
+        if (MRIStepSetPreconditioner(arkode_mem, nullptr, mri_pre) != ARKLS_SUCCESS) {
           throw BoutException("MRIStepSetPreconditioner failed\n");
         }
       } else {
@@ -240,7 +242,7 @@ int MriSolver::init() {
                                 .withDefault(n3Dvars() + n2Dvars());
 
         if (ARKBBDPrecInit(arkode_mem, local_N, mudq, mldq, mukeep, mlkeep, 0,
-                           arkode_bbd_rhs, nullptr)
+                           mri_bbd_rhs, nullptr)
             != ARKLS_SUCCESS) {
           throw BoutException("ARKBBDPrecInit failed\n");
         }
@@ -256,7 +258,7 @@ int MriSolver::init() {
   if (use_jacobian and hasJacobian()) {
     output.write("\tUsing user-supplied Jacobian function\n");
 
-    if (MRIStepSetJacTimes(arkode_mem, nullptr, arkode_jac) != ARKLS_SUCCESS) {
+    if (MRIStepSetJacTimes(arkode_mem, nullptr, mri_jac) != ARKLS_SUCCESS) {
       throw BoutException("MRIStepSetJacTimes failed\n");
     }
   } else {
@@ -287,7 +289,7 @@ int MriSolver::run() {
       // Step failed
       output.write("Timestep failed. Aborting\n");
 
-      throw BoutException("ARKode timestep failed\n");
+      throw BoutException("MRI timestep failed\n");
     }
 
     // Get additional diagnostics
@@ -305,9 +307,9 @@ int MriSolver::run() {
     nliters = int(temp_long_int);
 
     if (diagnose) {
-      output.write("\nARKODE: nsteps {:d}, nfe_evals {:d}, nfi_evals {:d}, nniters {:d}, "
+      output.write("MRI: nsteps {:d}, nff_evals {:d}, nfe_evals {:d}, nfi_evals {:d}, nniters {:d}, "
                    "npevals {:d}, nliters {:d}\n",
-                   nsteps, nfe_evals, nfi_evals, nniters, npevals, nliters);
+                   nsteps, nff_evals, nfe_evals, nfi_evals, nniters, npevals, nliters);
 
       output.write("    -> Newton iterations per step: {:e}\n",
                    static_cast<BoutReal>(nniters) / static_cast<BoutReal>(nsteps));
@@ -348,7 +350,7 @@ BoutReal MriSolver::run(BoutReal tout) {
       flag = MRIStepEvolve(arkode_mem, tout, uvec, &internal_time, ARK_ONE_STEP);
 
       if (flag != ARK_SUCCESS) {
-        output_error.write("ERROR ARKODE solve failed at t = {:e}, flag = {:d}\n",
+        output_error.write("ERROR MRI solve failed at t = {:e}, flag = {:d}\n",
                            internal_time, flag);
         return -1.0;
       }
@@ -367,7 +369,7 @@ BoutReal MriSolver::run(BoutReal tout) {
   run_rhs(simtime);
   // run_diffusive(simtime);
   if (flag != ARK_SUCCESS) {
-    output_error.write("ERROR ARKODE solve failed at t = {:e}, flag = {:d}\n", simtime,
+    output_error.write("ERROR MRI solve failed at t = {:e}, flag = {:d}\n", simtime,
                        flag);
     return -1.0;
   }
@@ -464,10 +466,10 @@ void MriSolver::jac(BoutReal t, BoutReal* ydata, BoutReal* vdata, BoutReal* Jvda
 }
 
 /**************************************************************************
- * ARKODE explicit RHS functions
+ * MRI explicit RHS functions
  **************************************************************************/
 
-static int arkode_rhs_explicit(BoutReal t, N_Vector u, N_Vector du, void* user_data) {
+static int mri_rhs_explicit(BoutReal t, N_Vector u, N_Vector du, void* user_data) {
 
   BoutReal* udata = N_VGetArrayPointer(u);
   BoutReal* dudata = N_VGetArrayPointer(du);
@@ -483,7 +485,7 @@ static int arkode_rhs_explicit(BoutReal t, N_Vector u, N_Vector du, void* user_d
   return 0;
 }
 
-static int arkode_rhs_implicit(BoutReal t, N_Vector u, N_Vector du, void* user_data) {
+static int mri_rhs_implicit(BoutReal t, N_Vector u, N_Vector du, void* user_data) {
 
   BoutReal* udata = N_VGetArrayPointer(u);
   BoutReal* dudata = N_VGetArrayPointer(du);
@@ -500,13 +502,13 @@ static int arkode_rhs_implicit(BoutReal t, N_Vector u, N_Vector du, void* user_d
 }
 
 /// RHS function for BBD preconditioner
-static int arkode_bbd_rhs(sunindextype UNUSED(Nlocal), BoutReal t, N_Vector u,
+static int mri_bbd_rhs(sunindextype UNUSED(Nlocal), BoutReal t, N_Vector u,
                           N_Vector du, void* user_data) {
-  return arkode_rhs_implicit(t, u, du, user_data);
+  return mri_rhs_implicit(t, u, du, user_data);
 }
 
 /// Preconditioner function
-static int arkode_pre(BoutReal t, N_Vector yy, N_Vector UNUSED(yp), N_Vector rvec,
+static int mri_pre(BoutReal t, N_Vector yy, N_Vector UNUSED(yp), N_Vector rvec,
                       N_Vector zvec, BoutReal gamma, BoutReal delta, int UNUSED(lr),
                       void* user_data) {
   BoutReal* udata = N_VGetArrayPointer(yy);
@@ -522,7 +524,7 @@ static int arkode_pre(BoutReal t, N_Vector yy, N_Vector UNUSED(yp), N_Vector rve
 }
 
 /// Jacobian-vector multiplication function
-static int arkode_jac(N_Vector v, N_Vector Jv, BoutReal t, N_Vector y,
+static int mri_jac(N_Vector v, N_Vector Jv, BoutReal t, N_Vector y,
                       N_Vector UNUSED(fy), void* user_data, N_Vector UNUSED(tmp)) {
   BoutReal* ydata = N_VGetArrayPointer(y);   ///< System state
   BoutReal* vdata = N_VGetArrayPointer(v);   ///< Input vector
