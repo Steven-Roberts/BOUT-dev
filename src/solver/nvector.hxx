@@ -53,24 +53,24 @@ T& N_VData_Bout(const N_Vector v) {
 }
 
 namespace {
-  template <typename T, typename F, typename... Args>
-  std::enable_if_t<bout::utils::is_Field_v<T>, void> mapFields(F f, Args ... vectors) {
-    f(N_VData_Bout<T>(vectors)...);
-  }
-
-  template <typename T, typename F, typename... Args>
-  std::enable_if_t<std::is_base_of_v<Vector2D, T>, void> mapFields(F f, Args ... vectors) {
-    f(N_VData_Bout<T>(vectors).x...);
-    f(N_VData_Bout<T>(vectors).y...);
-  }
-
-  template <typename T, typename F, typename... Args>
-  std::enable_if_t<std::is_base_of_v<Vector3D, T>, void> mapFields(F f, Args ... vectors) {
-    f(N_VData_Bout<T>(vectors).x...);
-    f(N_VData_Bout<T>(vectors).y...);
-    f(N_VData_Bout<T>(vectors).z...);
-  }
+template <typename T, typename F, typename... Args>
+std::enable_if_t<bout::utils::is_Field_v<T>, void> mapFields(F f, Args... vectors) {
+  f(N_VData_Bout<T>(vectors)...);
 }
+
+template <typename T, typename F, typename... Args>
+std::enable_if_t<std::is_base_of_v<Vector2D, T>, void> mapFields(F f, Args... vectors) {
+  f(N_VData_Bout<T>(vectors).x...);
+  f(N_VData_Bout<T>(vectors).y...);
+}
+
+template <typename T, typename F, typename... Args>
+std::enable_if_t<std::is_base_of_v<Vector3D, T>, void> mapFields(F f, Args... vectors) {
+  f(N_VData_Bout<T>(vectors).x...);
+  f(N_VData_Bout<T>(vectors).y...);
+  f(N_VData_Bout<T>(vectors).z...);
+}
+} // namespace
 
 template <typename T>
 N_Vector N_VNew_Bout(const SUNContext ctx, T& data, const bool own = false) {
@@ -100,28 +100,24 @@ N_Vector N_VNew_Bout(const SUNContext ctx, T& data, const bool own = false) {
 
   v->ops->nvgetlength = [](N_Vector x) {
     sunindextype len = 0;
-    mapFields<T>([&len] (auto & fx) {
-      len += fx.size(); // TODO: check this isn't the MPI local size
-    }, x);
+    mapFields<T>(
+        [&len](auto& fx) {
+          len += fx.size(); // TODO: check this isn't the MPI local size
+        },
+        x);
     return len;
   };
 
   v->ops->nvconst = [](sunrealtype c, N_Vector x) {
-    mapFields<T>([c] (auto & f) {
-      f = c;
-    }, x);
+    mapFields<T>([c](auto& f) { f = c; }, x);
   };
 
   v->ops->nvprod = [](N_Vector x, N_Vector y, N_Vector z) {
-    mapFields<T>([] (auto & fx, auto & fy, auto & fz) {
-      fz = fx * fy;
-    }, x, y, z);
+    mapFields<T>([](auto& fx, auto& fy, auto& fz) { fz = fx * fy; }, x, y, z);
   };
 
   v->ops->nvabs = [](N_Vector x, N_Vector y) {
-    mapFields<T>([] (auto & fx, auto & fy) {
-      fy = abs(fx);
-    }, x, y);
+    mapFields<T>([](auto& fx, auto& fy) { fy = abs(fx); }, x, y);
   };
 
   /* Other functions to implement (most optional)
