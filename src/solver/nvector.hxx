@@ -34,147 +34,165 @@
 #include "bout/sundials_backports.hxx"
 
 namespace {
-  template <typename T>
-  struct Content {
-    T& field;
-    const bool own;
-  };
+template <typename T>
+struct Content {
+  T& data; // A vector or field
+  const bool own;
 
-  template <typename T>
-  Content<T>& N_VContent_Bout(const N_Vector v) {
-    return *static_cast<Content<T>*>(v->content);
+  ~Content() {
+    if (own) {
+      delete &data;
+    }
+  }
+};
+} // namespace
+
+template <typename T>
+T& N_VData_Bout(const N_Vector v) {
+  return static_cast<Content<T>*>(v->content)->data;
+}
+
+namespace {
+  template <typename T, typename F, typename... Args>
+  std::enable_if_t<bout::utils::is_Field_v<T>, void> mapFields(F f, Args ... vectors) {
+    f(N_VData_Bout<T>(vectors)...);
+  }
+
+  template <typename T, typename F, typename... Args>
+  std::enable_if_t<std::is_base_of_v<Vector2D, T>, void> mapFields(F f, Args ... vectors) {
+    f(N_VData_Bout<T>(vectors).x...);
+    f(N_VData_Bout<T>(vectors).y...);
+  }
+
+  template <typename T, typename F, typename... Args>
+  std::enable_if_t<std::is_base_of_v<Vector3D, T>, void> mapFields(F f, Args ... vectors) {
+    f(N_VData_Bout<T>(vectors).x...);
+    f(N_VData_Bout<T>(vectors).y...);
+    f(N_VData_Bout<T>(vectors).z...);
   }
 }
 
-template <typename T, typename = bout::utils::EnableIfField<T>>
-T& N_VField_Bout(const N_Vector v) {
-  return N_VContent_Bout<T>(v).field;
-}
-
-template <typename T, typename = bout::utils::EnableIfField<T>>
-N_Vector N_VNew_Bout(const SUNContext ctx, T& field, const bool own = false) {
+template <typename T>
+N_Vector N_VNew_Bout(const SUNContext ctx, T& data, const bool own = false) {
   N_Vector v = callWithSUNContext(N_VNewEmpty, ctx);
   if (v == nullptr) {
     throw BoutException("N_VNewEmpty failed\n");
   }
 
-  v->content = static_cast<void*>(new Content<T>({field, own}));
+  v->content = static_cast<void*>(new Content<T>({data, own}));
 
   v->ops->nvgetvectorid = []([[maybe_unused]] N_Vector x) {
     return SUNDIALS_NVEC_CUSTOM;
   };
 
   v->ops->nvclone = [](N_Vector x) {
-    T* field = new T(N_VField_Bout<T>(x));
-    return N_VNew_Bout<T>(x->sunctx, *field, true);
+    T* data = new T(N_VData_Bout<T>(x));
+    return N_VNew_Bout<T>(x->sunctx, *data, true);
   };
 
   v->ops->nvdestroy = [](N_Vector x) {
     if (x == nullptr) {
       return;
     }
-    if (x->content != nullptr && N_VContent_Bout<T>(x).own) {
-      delete &N_VField_Bout<T>(x);
-    }
-    delete &N_VContent_Bout<T>(x);
+    delete static_cast<Content<T>*>(x->content);
     N_VFreeEmpty(x);
   };
 
-  v->ops->nvgetlength = [](N_Vector x) -> sunindextype {
-    // Is the the full domain size or just the subset fo the MPI process?
-    return N_VField_Bout<T>(x).size();
+  v->ops->nvgetlength = [](N_Vector x) {
+    sunindextype len = 0;
+    mapFields<T>([&len] (auto & fx) {
+      len += fx.size(); // TODO: check this isn't the MPI local size
+    }, x);
+    return len;
   };
 
   v->ops->nvconst = [](sunrealtype c, N_Vector x) {
-    N_VField_Bout<T>(x) = c;
+    mapFields<T>([c] (auto & f) {
+      f = c;
+    }, x);
   };
 
   v->ops->nvprod = [](N_Vector x, N_Vector y, N_Vector z) {
-    // TODO: make sure this is the most efficient way
-    N_VField_Bout<T>(z) = N_VField_Bout<T>(x) * N_VField_Bout<T>(y);
+    mapFields<T>([] (auto & fx, auto & fy, auto & fz) {
+      fz = fx * fy;
+    }, x, y, z);
   };
 
   v->ops->nvabs = [](N_Vector x, N_Vector y) {
-    N_VField_Bout<T>(y) = abs(N_VField_Bout<T>(x));
+    mapFields<T>([] (auto & fx, auto & fy) {
+      fy = abs(fx);
+    }, x, y);
   };
 
   /* Other functions to implement (most optional)
-  N_Vector (*nvcloneempty)(N_Vector);
-   void (*nvdestroy)(N_Vector);
-   void (*nvspace)(N_Vector, sunindextype*, sunindextype*);
-   sunrealtype* (*nvgetarraypointer)(N_Vector);
-   sunrealtype* (*nvgetdevicearraypointer)(N_Vector);
-   void (*nvsetarraypointer)(sunrealtype*, N_Vector);
-   SUNComm (*nvgetcommunicator)(N_Vector);
-   sunindextype (*nvgetlength)(N_Vector);
-   sunindextype (*nvgetlocallength)(N_Vector);
-   void (*nvlinearsum)(sunrealtype, N_Vector, sunrealtype, N_Vector, N_Vector);
-   void (*nvconst)(sunrealtype, N_Vector);
-   void (*nvprod)(N_Vector, N_Vector, N_Vector);
-   void (*nvdiv)(N_Vector, N_Vector, N_Vector);
-   void (*nvscale)(sunrealtype, N_Vector, N_Vector);
-   void (*nvabs)(N_Vector, N_Vector);
-   void (*nvinv)(N_Vector, N_Vector);
-   void (*nvaddconst)(N_Vector, sunrealtype, N_Vector);
-   sunrealtype (*nvdotprod)(N_Vector, N_Vector);
-   sunrealtype (*nvmaxnorm)(N_Vector);
-   sunrealtype (*nvwrmsnorm)(N_Vector, N_Vector);
-   sunrealtype (*nvwrmsnormmask)(N_Vector, N_Vector, N_Vector);
-   sunrealtype (*nvmin)(N_Vector);
-   sunrealtype (*nvwl2norm)(N_Vector, N_Vector);
-   sunrealtype (*nvl1norm)(N_Vector);
-   void (*nvcompare)(sunrealtype, N_Vector, N_Vector);
-   sunbooleantype (*nvinvtest)(N_Vector, N_Vector);
-   sunbooleantype (*nvconstrmask)(N_Vector, N_Vector, N_Vector);
-   sunrealtype (*nvminquotient)(N_Vector, N_Vector);
-   SUNErrCode (*nvlinearcombination)(int, sunrealtype*, N_Vector*, N_Vector);
+  N_Vector (*nvcloneempty)(N_Vector); // Probably not needed
+   void (*nvdestroy)(N_Vector); // Implemented
+   void (*nvspace)(N_Vector, sunindextype*, sunindextype*); // Probably not needed
+   sunrealtype* (*nvgetarraypointer)(N_Vector); // Probably not needed
+   sunrealtype* (*nvgetdevicearraypointer)(N_Vector); // Probably not needed
+   void (*nvsetarraypointer)(sunrealtype*, N_Vector); // Probably not needed
+   SUNComm (*nvgetcommunicator)(N_Vector); // Probably not needed
+   sunindextype (*nvgetlength)(N_Vector); // Implemented
+   sunindextype (*nvgetlocallength)(N_Vector);  // Probably not needed
+   void (*nvlinearsum)(sunrealtype, N_Vector, sunrealtype, N_Vector, N_Vector); // TODO
+   void (*nvconst)(sunrealtype, N_Vector); // Implemented
+   void (*nvprod)(N_Vector, N_Vector, N_Vector); // Implemented
+   void (*nvdiv)(N_Vector, N_Vector, N_Vector); // TODO
+   void (*nvscale)(sunrealtype, N_Vector, N_Vector); // TODO
+   void (*nvabs)(N_Vector, N_Vector); // Implemented
+   void (*nvinv)(N_Vector, N_Vector); // TODO
+   void (*nvaddconst)(N_Vector, sunrealtype, N_Vector); // TODO
+   sunrealtype (*nvdotprod)(N_Vector, N_Vector); // TODO
+   sunrealtype (*nvmaxnorm)(N_Vector); // TODO
+   sunrealtype (*nvwrmsnorm)(N_Vector, N_Vector); // TODO
+   sunrealtype (*nvwrmsnormmask)(N_Vector, N_Vector, N_Vector); // TODO
+   sunrealtype (*nvmin)(N_Vector); // TODO
+   sunrealtype (*nvwl2norm)(N_Vector, N_Vector); // TODO
+   sunrealtype (*nvl1norm)(N_Vector); // TODO
+   void (*nvcompare)(sunrealtype, N_Vector, N_Vector); // TODO
+   sunbooleantype (*nvinvtest)(N_Vector, N_Vector); // TODO
+   sunbooleantype (*nvconstrmask)(N_Vector, N_Vector, N_Vector); // TODO
+   sunrealtype (*nvminquotient)(N_Vector, N_Vector); // TODO
+   SUNErrCode (*nvlinearcombination)(int, sunrealtype*, N_Vector*, N_Vector); // TODO
    SUNErrCode (*nvscaleaddmulti)(int, sunrealtype*, N_Vector, N_Vector*,
-                                 N_Vector*);
-   SUNErrCode (*nvdotprodmulti)(int, N_Vector, N_Vector*, sunrealtype*);
+                                 N_Vector*); // Probably not needed
+   SUNErrCode (*nvdotprodmulti)(int, N_Vector, N_Vector*, sunrealtype*); // Probably not needed
    SUNErrCode (*nvlinearsumvectorarray)(int, sunrealtype, N_Vector*, sunrealtype,
-                                          N_Vector*, N_Vector*);
-   SUNErrCode (*nvscalevectorarray)(int, sunrealtype*, N_Vector*, N_Vector*);
-   SUNErrCode (*nvconstvectorarray)(int, sunrealtype, N_Vector*);
-   SUNErrCode (*nvwrmsnormvectorarray)(int, N_Vector*, N_Vector*, sunrealtype*);
+                                          N_Vector*, N_Vector*); // Probably not needed
+   SUNErrCode (*nvscalevectorarray)(int, sunrealtype*, N_Vector*, N_Vector*); // Probably not needed
+   SUNErrCode (*nvconstvectorarray)(int, sunrealtype, N_Vector*); // Probably not needed
+   SUNErrCode (*nvwrmsnormvectorarray)(int, N_Vector*, N_Vector*, sunrealtype*); // Probably not needed
    SUNErrCode (*nvwrmsnormmaskvectorarray)(int, N_Vector*, N_Vector*, N_Vector,
-                                             sunrealtype*);
+                                             sunrealtype*); // Probably not needed
    SUNErrCode (*nvscaleaddmultivectorarray)(int, int, sunrealtype*, N_Vector*,
-                                             N_Vector**, N_Vector**);
+                                             N_Vector**, N_Vector**); // Probably not needed
    SUNErrCode (*nvlinearcombinationvectorarray)(int, int, sunrealtype*,
-                                                N_Vector**, N_Vector*);
-   sunrealtype (*nvdotprodlocal)(N_Vector, N_Vector);
-   sunrealtype (*nvmaxnormlocal)(N_Vector);
-   sunrealtype (*nvminlocal)(N_Vector);
-   sunrealtype (*nvl1normlocal)(N_Vector);
-   sunbooleantype (*nvinvtestlocal)(N_Vector, N_Vector);
-   sunbooleantype (*nvconstrmasklocal)(N_Vector, N_Vector, N_Vector);
-   sunrealtype (*nvminquotientlocal)(N_Vector, N_Vector);
-   sunrealtype (*nvwsqrsumlocal)(N_Vector, N_Vector);
-   sunrealtype (*nvwsqrsummasklocal)(N_Vector, N_Vector, N_Vector);
-   SUNErrCode (*nvdotprodmultilocal)(int, N_Vector, N_Vector*, sunrealtype*);
-   SUNErrCode (*nvdotprodmultiallreduce)(int, N_Vector, sunrealtype*);
-   SUNErrCode (*nvbufsize)(N_Vector, sunindextype*);
-   SUNErrCode (*nvbufpack)(N_Vector, void*);
-   SUNErrCode (*nvbufunpack)(N_Vector, void*);
-   void (*nvprint)(N_Vector);
-   void (*nvprintfile)(N_Vector, FILE*);
+                                                N_Vector**, N_Vector*); // Probably not needed
+   sunrealtype (*nvdotprodlocal)(N_Vector, N_Vector); // Probably not needed
+   sunrealtype (*nvmaxnormlocal)(N_Vector); // Probably not needed
+   sunrealtype (*nvminlocal)(N_Vector); // Probably not needed
+   sunrealtype (*nvl1normlocal)(N_Vector); // Probably not needed
+   sunbooleantype (*nvinvtestlocal)(N_Vector, N_Vector); // Probably not needed
+   sunbooleantype (*nvconstrmasklocal)(N_Vector, N_Vector, N_Vector); // Probably not needed
+   sunrealtype (*nvminquotientlocal)(N_Vector, N_Vector); // Probably not needed
+   sunrealtype (*nvwsqrsumlocal)(N_Vector, N_Vector); // Probably not needed
+   sunrealtype (*nvwsqrsummasklocal)(N_Vector, N_Vector, N_Vector); // Probably not needed
+   SUNErrCode (*nvdotprodmultilocal)(int, N_Vector, N_Vector*, sunrealtype*); // Probably not needed
+   SUNErrCode (*nvdotprodmultiallreduce)(int, N_Vector, sunrealtype*); // Probably not needed
+   SUNErrCode (*nvbufsize)(N_Vector, sunindextype*); // Probably not needed
+   SUNErrCode (*nvbufpack)(N_Vector, void*); // Probably not needed
+   SUNErrCode (*nvbufunpack)(N_Vector, void*); // Probably not needed
+   void (*nvprint)(N_Vector); // Nice, but optional
+   void (*nvprintfile)(N_Vector, FILE*); // Probably not needed
    */
 
   return v;
 }
 
 template <typename... Args>
-N_Vector N_VNew_Bout(const SUNContext ctx, Args&... args) {
+N_Vector N_VNew_Bout(SUNContext ctx, Args&... args) {
   N_Vector vecs[] = {N_VNew_Bout(ctx, args)...};
   return N_VNew_ManyVector(sizeof...(Args), vecs, ctx);
-}
-
-N_Vector N_VNew_Bout(const SUNContext ctx, Vector2D& vec) {
-  return N_VNew_Bout(ctx, vec.x, vec.y);
-}
-
-N_Vector N_VNew_Bout(const SUNContext ctx, Vector3D& vec) {
-  return N_VNew_Bout(ctx, vec.x, vec.y, vec.z);
 }
 
 #endif
