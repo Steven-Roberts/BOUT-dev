@@ -33,48 +33,69 @@
 
 #include "bout/sundials_backports.hxx"
 
-template <typename T, typename = bout::utils::EnableIfField<T>>
-T& N_VContent_Bout(N_Vector v) {
-  return *static_cast<T*>(v->content);
+namespace {
+  template <typename T>
+  struct Content {
+    T& field;
+    const bool own;
+  };
+
+  template <typename T>
+  Content<T>& N_VContent_Bout(const N_Vector v) {
+    return *static_cast<Content<T>*>(v->content);
+  }
 }
 
 template <typename T, typename = bout::utils::EnableIfField<T>>
-N_Vector N_VNew_Bout(sundials::Context& ctx, T& field) {
+T& N_VField_Bout(const N_Vector v) {
+  return N_VContent_Bout<T>(v).field;
+}
+
+template <typename T, typename = bout::utils::EnableIfField<T>>
+N_Vector N_VNew_Bout(const SUNContext ctx, T& field, const bool own = false) {
   N_Vector v = callWithSUNContext(N_VNewEmpty, ctx);
   if (v == nullptr) {
     throw BoutException("N_VNewEmpty failed\n");
   }
 
-  // TODO: double check ownership of the field. This is probably ok, though
-  v->content = static_cast<void*>(&field);
+  v->content = static_cast<void*>(new Content<T>({field, own}));
 
   v->ops->nvgetvectorid = []([[maybe_unused]] N_Vector x) {
     return SUNDIALS_NVEC_CUSTOM;
   };
 
   v->ops->nvclone = [](N_Vector x) {
-    // TODO
-    return x;
+    T* field = new T(N_VField_Bout<T>(x));
+    return N_VNew_Bout<T>(x->sunctx, *field, true);
   };
 
-  v->ops->nvdestroy = [](N_Vector x) { N_VFreeEmpty(x); };
+  v->ops->nvdestroy = [](N_Vector x) {
+    if (x == nullptr) {
+      return;
+    }
+    if (x->content != nullptr && N_VContent_Bout<T>(x).own) {
+      delete &N_VField_Bout<T>(x);
+    }
+    delete &N_VContent_Bout<T>(x);
+    N_VFreeEmpty(x);
+  };
 
   v->ops->nvgetlength = [](N_Vector x) -> sunindextype {
     // Is the the full domain size or just the subset fo the MPI process?
-    return N_VContent_Bout<T>(x).size();
+    return N_VField_Bout<T>(x).size();
   };
 
   v->ops->nvconst = [](sunrealtype c, N_Vector x) {
-    N_VContent_Bout<T>(x) = c;
+    N_VField_Bout<T>(x) = c;
   };
 
   v->ops->nvprod = [](N_Vector x, N_Vector y, N_Vector z) {
     // TODO: make sure this is the most efficient way
-    N_VContent_Bout<T>(z) = N_VContent_Bout<T>(x) * N_VContent_Bout<T>(y);
+    N_VField_Bout<T>(z) = N_VField_Bout<T>(x) * N_VField_Bout<T>(y);
   };
 
   v->ops->nvabs = [](N_Vector x, N_Vector y) {
-    N_VContent_Bout<T>(y) = abs(N_VContent_Bout<T>(x));
+    N_VField_Bout<T>(y) = abs(N_VField_Bout<T>(x));
   };
 
   /* Other functions to implement (most optional)
@@ -143,16 +164,16 @@ N_Vector N_VNew_Bout(sundials::Context& ctx, T& field) {
 }
 
 template <typename... Args>
-N_Vector N_VNew_Bout(sundials::Context& ctx, Args&... args) {
+N_Vector N_VNew_Bout(const SUNContext ctx, Args&... args) {
   N_Vector vecs[] = {N_VNew_Bout(ctx, args)...};
   return N_VNew_ManyVector(sizeof...(Args), vecs, ctx);
 }
 
-N_Vector N_VNew_Bout(sundials::Context& ctx, Vector2D& vec) {
-  return N_VNew_Bout<Field2D, Field2D>(ctx, vec.x, vec.y);
+N_Vector N_VNew_Bout(const SUNContext ctx, Vector2D& vec) {
+  return N_VNew_Bout(ctx, vec.x, vec.y);
 }
 
-N_Vector N_VNew_Bout(sundials::Context& ctx, Vector3D& vec) {
+N_Vector N_VNew_Bout(const SUNContext ctx, Vector3D& vec) {
   return N_VNew_Bout(ctx, vec.x, vec.y, vec.z);
 }
 

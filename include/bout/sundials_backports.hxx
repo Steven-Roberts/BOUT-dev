@@ -62,7 +62,7 @@ inline sundials::Context createSUNContext([[maybe_unused]] MPI_Comm& comm) {
 }
 
 template <typename Func, typename... Args>
-inline decltype(auto) callWithSUNContext(Func f, [[maybe_unused]] sundials::Context& ctx,
+inline decltype(auto) callWithSUNContext(Func f, [[maybe_unused]] const SUNContext ctx,
                                          Args&&... args) {
 #if SUNDIALS_VERSION_MAJOR < 6
   return f(std::forward<Args>(args)...);
