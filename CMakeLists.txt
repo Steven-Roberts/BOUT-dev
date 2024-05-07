@@ -325,6 +325,7 @@ set(BOUT_SOURCES
   ./src/solver/impls/split-rk/split-rk.cxx
   ./src/solver/impls/split-rk/split-rk.hxx
   ./src/solver/solver.cxx
+  ./src/solver/nvector.hxx
   ./src/sys/adios_object.cxx
   ./src/sys/bout_types.cxx
   ./src/sys/boutcomm.cxx
