@@ -36,58 +36,74 @@
 namespace {
 template <typename T>
 struct Content {
-  T& data; // A vector or field
+  T& field; // A Field2D or Field3D
   const bool own;
 
   ~Content() {
     if (own) {
-      delete &data;
+      delete &field;
     }
   }
 };
+
+template <typename R, typename T, typename... U>
+BoutReal fieldReduce(R reduce, bool allpe, const std::string& rgn, const T& f1,
+                     const U&... f2) {
+  BoutReal result = 0;
+  const auto region = f1.getRegion(rgn);
+    BOUT_FOR_OMP(i, region, parallel for reduction(+:result)) {
+      result += reduce(f1[i], f2[i]...);
+    }
+
+    if (allpe) {
+      BoutReal localresult = result;
+      MPI_Allreduce(&localresult, &result, 1, MPI_DOUBLE, MPI_MAX, BoutComm::get());
+    }
+    return result;
+}
+
+template <typename T>
+BoutReal dotProd(const T& f1, const T& f2, bool allpe = false,
+                 const std::string& rgn = "RGN_NOBNDRY") {
+  return fieldReduce(std::multiplies(), allpe, rgn, f1, f2);
+}
+
+template <typename T>
+BoutReal weightedL2Norm(const T& f, const T& w, bool allpe = false,
+                        const std::string& rgn = "RGN_NOBNDRY") {
+  return fieldReduce(
+      [](const BoutReal v1, const BoutReal v2) { return std::pow(v1 * v2, 2); }, allpe,
+      rgn, f, w);
+}
+
+template <typename T>
+BoutReal l1Norm(const T& f, bool allpe = false, const std::string& rgn = "RGN_NOBNDRY") {
+  return fieldReduce(std::abs<BoutReal>, allpe, rgn, f);
+}
 } // namespace
 
 template <typename T>
-T& N_VData_Bout(const N_Vector v) {
-  return static_cast<Content<T>*>(v->content)->data;
+T& N_VField_Bout(const N_Vector v) {
+  return static_cast<Content<T>*>(v->content)->field;
 }
 
-namespace {
-template <typename T, typename F, typename... Args>
-std::enable_if_t<bout::utils::is_Field_v<T>, void> mapFields(F f, Args... vectors) {
-  f(N_VData_Bout<T>(vectors)...);
-}
-
-template <typename T, typename F, typename... Args>
-std::enable_if_t<std::is_base_of_v<Vector2D, T>, void> mapFields(F f, Args... vectors) {
-  f(N_VData_Bout<T>(vectors).x...);
-  f(N_VData_Bout<T>(vectors).y...);
-}
-
-template <typename T, typename F, typename... Args>
-std::enable_if_t<std::is_base_of_v<Vector3D, T>, void> mapFields(F f, Args... vectors) {
-  f(N_VData_Bout<T>(vectors).x...);
-  f(N_VData_Bout<T>(vectors).y...);
-  f(N_VData_Bout<T>(vectors).z...);
-}
-} // namespace
-
-template <typename T>
-N_Vector N_VNew_Bout(const SUNContext ctx, T& data, const bool own = false) {
+template <typename T, typename = bout::utils::EnableIfField<T>>
+N_Vector N_VNew_Bout(const SUNContext ctx, T& field, const bool own = false) {
   N_Vector v = callWithSUNContext(N_VNewEmpty, ctx);
   if (v == nullptr) {
     throw BoutException("N_VNewEmpty failed\n");
   }
 
-  v->content = static_cast<void*>(new Content<T>({data, own}));
+  v->content = static_cast<void*>(new Content<T>({field, own}));
 
   v->ops->nvgetvectorid = []([[maybe_unused]] N_Vector x) {
     return SUNDIALS_NVEC_CUSTOM;
   };
 
   v->ops->nvclone = [](N_Vector x) {
-    T* data = new T(N_VData_Bout<T>(x));
-    return N_VNew_Bout<T>(x->sunctx, *data, true);
+    T* const fieldClone = new T(N_VField_Bout<T>(x));
+    fieldClone->allocate();
+    return N_VNew_Bout(x->sunctx, *fieldClone, true);
   };
 
   v->ops->nvdestroy = [](N_Vector x) {
@@ -99,26 +115,59 @@ N_Vector N_VNew_Bout(const SUNContext ctx, T& data, const bool own = false) {
   };
 
   v->ops->nvgetlength = [](N_Vector x) {
-    sunindextype len = 0;
-    mapFields<T>(
-        [&len](auto& fx) {
-          len += fx.size(); // TODO: check this isn't the MPI local size
-        },
-        x);
-    return len;
+    // Is this correct with MPI?
+    return static_cast<sunindextype>(N_VField_Bout<T>(x).size());
   };
 
-  v->ops->nvconst = [](sunrealtype c, N_Vector x) {
-    mapFields<T>([c](auto& f) { f = c; }, x);
+  v->ops->nvlinearsum = [](sunrealtype a, N_Vector x, sunrealtype b, N_Vector y,
+                           N_Vector z) {
+    N_VField_Bout<T>(z) = a * N_VField_Bout<T>(x) + b * N_VField_Bout<T>(y);
   };
+
+  v->ops->nvconst = [](sunrealtype c, N_Vector x) { N_VField_Bout<T>(x) = c; };
 
   v->ops->nvprod = [](N_Vector x, N_Vector y, N_Vector z) {
-    mapFields<T>([](auto& fx, auto& fy, auto& fz) { fz = fx * fy; }, x, y, z);
+    N_VField_Bout<T>(z) = N_VField_Bout<T>(x) * N_VField_Bout<T>(y);
+  };
+
+  v->ops->nvdiv = [](N_Vector x, N_Vector y, N_Vector z) {
+    N_VField_Bout<T>(z) = N_VField_Bout<T>(x) / N_VField_Bout<T>(y);
+  };
+
+  v->ops->nvscale = [](sunrealtype a, N_Vector x, N_Vector y) {
+    N_VField_Bout<T>(y) = a * N_VField_Bout<T>(x);
   };
 
   v->ops->nvabs = [](N_Vector x, N_Vector y) {
-    mapFields<T>([](auto& fx, auto& fy) { fy = abs(fx); }, x, y);
+    N_VField_Bout<T>(y) = abs(N_VField_Bout<T>(x));
   };
+
+  v->ops->nvinv = [](N_Vector x, N_Vector y) {
+    N_VField_Bout<T>(y) = 1 / N_VField_Bout<T>(x);
+  };
+
+  v->ops->nvaddconst = [](N_Vector x, sunrealtype a, N_Vector y) {
+    N_VField_Bout<T>(y) = a + N_VField_Bout<T>(x);
+  };
+
+  v->ops->nvdotprod = [](N_Vector x, N_Vector y) {
+    return dotProd(N_VField_Bout<T>(x), N_VField_Bout<T>(y), true);
+  };
+
+  v->ops->nvmaxnorm = [](N_Vector x) { return max(abs(N_VField_Bout<T>(x)), true); };
+
+  v->ops->nvwrmsnorm = [](N_Vector x, N_Vector y) {
+    const auto sqrtLen = std::sqrt(static_cast<BoutReal>(N_VGetLength(x)));
+    return weightedL2Norm(N_VField_Bout<T>(x), N_VField_Bout<T>(y), true) / sqrtLen;
+  };
+
+  v->ops->nvmin = [](N_Vector x) { return min(N_VField_Bout<T>(x), true); };
+
+  v->ops->nvwl2norm = [](N_Vector x, N_Vector y) {
+    return weightedL2Norm(N_VField_Bout<T>(x), N_VField_Bout<T>(y), true);
+  };
+
+  v->ops->nvl1norm = [](N_Vector x) { return l1Norm(N_VField_Bout<T>(x), true); };
 
   /* Other functions to implement (most optional)
   N_Vector (*nvcloneempty)(N_Vector); // Probably not needed
@@ -130,21 +179,21 @@ N_Vector N_VNew_Bout(const SUNContext ctx, T& data, const bool own = false) {
    SUNComm (*nvgetcommunicator)(N_Vector); // Probably not needed
    sunindextype (*nvgetlength)(N_Vector); // Implemented
    sunindextype (*nvgetlocallength)(N_Vector);  // Probably not needed
-   void (*nvlinearsum)(sunrealtype, N_Vector, sunrealtype, N_Vector, N_Vector); // TODO
+   void (*nvlinearsum)(sunrealtype, N_Vector, sunrealtype, N_Vector, N_Vector); // Implemented
    void (*nvconst)(sunrealtype, N_Vector); // Implemented
    void (*nvprod)(N_Vector, N_Vector, N_Vector); // Implemented
-   void (*nvdiv)(N_Vector, N_Vector, N_Vector); // TODO
-   void (*nvscale)(sunrealtype, N_Vector, N_Vector); // TODO
+   void (*nvdiv)(N_Vector, N_Vector, N_Vector); // Implemented
+   void (*nvscale)(sunrealtype, N_Vector, N_Vector); // Implemented
    void (*nvabs)(N_Vector, N_Vector); // Implemented
-   void (*nvinv)(N_Vector, N_Vector); // TODO
-   void (*nvaddconst)(N_Vector, sunrealtype, N_Vector); // TODO
-   sunrealtype (*nvdotprod)(N_Vector, N_Vector); // TODO
-   sunrealtype (*nvmaxnorm)(N_Vector); // TODO
-   sunrealtype (*nvwrmsnorm)(N_Vector, N_Vector); // TODO
+   void (*nvinv)(N_Vector, N_Vector); // Implemented
+   void (*nvaddconst)(N_Vector, sunrealtype, N_Vector); // Implemented
+   sunrealtype (*nvdotprod)(N_Vector, N_Vector); // Implemented
+   sunrealtype (*nvmaxnorm)(N_Vector); // Implemented
+   sunrealtype (*nvwrmsnorm)(N_Vector, N_Vector); // Implemented
    sunrealtype (*nvwrmsnormmask)(N_Vector, N_Vector, N_Vector); // TODO
-   sunrealtype (*nvmin)(N_Vector); // TODO
-   sunrealtype (*nvwl2norm)(N_Vector, N_Vector); // TODO
-   sunrealtype (*nvl1norm)(N_Vector); // TODO
+   sunrealtype (*nvmin)(N_Vector); // Implemented
+   sunrealtype (*nvwl2norm)(N_Vector, N_Vector); // Implemented
+   sunrealtype (*nvl1norm)(N_Vector); // Implemented
    void (*nvcompare)(sunrealtype, N_Vector, N_Vector); // TODO
    sunbooleantype (*nvinvtest)(N_Vector, N_Vector); // TODO
    sunbooleantype (*nvconstrmask)(N_Vector, N_Vector, N_Vector); // TODO
@@ -185,10 +234,33 @@ N_Vector N_VNew_Bout(const SUNContext ctx, T& data, const bool own = false) {
   return v;
 }
 
-template <typename... Args>
-N_Vector N_VNew_Bout(SUNContext ctx, Args&... args) {
-  N_Vector vecs[] = {N_VNew_Bout(ctx, args)...};
-  return N_VNew_ManyVector(sizeof...(Args), vecs, ctx);
+N_Vector N_VNew_Bout(const SUNContext ctx, Vector2D& vec, const bool own = false) {
+  N_Vector vecs[] = {N_VNew_Bout(ctx, vec.x, own), N_VNew_Bout(ctx, vec.y, own)};
+  return N_VNew_ManyVector(2, vecs, ctx);
+}
+
+N_Vector N_VNew_Bout(const SUNContext ctx, Vector3D& vec, const bool own = false) {
+  N_Vector vecs[] = {N_VNew_Bout(ctx, vec.x, own), N_VNew_Bout(ctx, vec.y, own),
+                     N_VNew_Bout(ctx, vec.z, own)};
+  return N_VNew_ManyVector(3, vecs, ctx);
+}
+
+template <typename... T>
+N_Vector N_VNew_Bout(const SUNContext ctx, std::vector<T>&... args) {
+  std::vector<N_Vector> vecs((args.size() + ...));
+  auto vecsBegin = vecs.begin();
+  ((std::transform(args.begin(), args.end(), vecsBegin,
+                   [ctx](T& field) { return N_VNew_Bout(ctx, field); }),
+    vecsBegin += args.size()),
+   ...);
+  return N_VNew_ManyVector(vecs.size(), vecs.data(), ctx);
+}
+
+auto test() {
+  Vector3D* f = nullptr;
+  sundials::Context ctx;
+  std::vector v{*f, *f};
+  return N_VNew_Bout(ctx, v, v, v);
 }
 
 #endif
