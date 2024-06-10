@@ -71,9 +71,9 @@ BoutReal dotProd(const T& f1, const T& f2, bool allpe = false,
 template <typename T>
 BoutReal weightedL2Norm(const T& f, const T& w, bool allpe = false,
                         const std::string& rgn = "RGN_NOBNDRY") {
-  return fieldReduce(
+  return std::sqrt(fieldReduce(
       [](const BoutReal v1, const BoutReal v2) { return std::pow(v1 * v2, 2); }, allpe,
-      rgn, f, w);
+      rgn, f, w));
 }
 
 template <typename T>
