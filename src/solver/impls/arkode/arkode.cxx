@@ -297,6 +297,12 @@ int ArkodeSolver::init() {
     throw BoutException("Invalid adap_method\n");
   }
 
+  /* Parameter tweaks */
+  controller = SUNAdaptController_I(suncontext);
+  ARKStepSetFixedStepBounds(arkode_mem, 1, 1);
+  ARKStepSetSafetyFactor(arkode_mem, 0.9);
+  SUNAdaptController_SetErrorBias(controller, 1);
+
   if (ARKStepSetAdaptController(arkode_mem, controller) != ARK_SUCCESS) {
     throw BoutException("ARKStepSetAdaptController failed\n");
   }

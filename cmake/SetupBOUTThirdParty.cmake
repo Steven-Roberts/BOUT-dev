@@ -282,7 +282,7 @@ if (BOUT_USE_SUNDIALS)
     FetchContent_Declare(
       sundials
       GIT_REPOSITORY https://github.com/LLNL/sundials
-      GIT_TAG        v7.0.0
+      GIT_TAG        feature/min-err
       )
     # Note: These are settings for building SUNDIALS
     set(EXAMPLES_ENABLE_C OFF CACHE BOOL "" FORCE)
