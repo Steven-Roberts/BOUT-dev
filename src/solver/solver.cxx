@@ -22,8 +22,6 @@
 
 #include "bout/build_config.hxx"
 
-#include "nvector.hxx"
-
 #include "bout/array.hxx"
 #include "bout/assert.hxx"
 #include "bout/boutcomm.hxx"

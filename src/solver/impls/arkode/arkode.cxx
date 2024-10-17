@@ -40,6 +40,7 @@
 #include "bout/output.hxx"
 #include "bout/unused.hxx"
 #include "bout/utils.hxx"
+#include "../../nvector.hxx"
 
 #include <arkode/arkode_arkstep.h>
 #include <arkode/arkode_bbdpre.h>
@@ -187,13 +188,18 @@ int ArkodeSolver::init() {
                n2Dvars(), neq, local_N);
 
   // Allocate memory
-  uvec = callWithSUNContext(N_VNew_Parallel, suncontext, BoutComm::get(), local_N, neq);
+  // uvec = callWithSUNContext(N_VNew_Parallel, suncontext, BoutComm::get(), local_N, neq);
+  // if (uvec == nullptr) {
+  //   throw BoutException("SUNDIALS memory allocation failed\n");
+  // }
+
+  uvec = N_VNew_Bout(suncontext, *f3d.back().var, false);
   if (uvec == nullptr) {
-    throw BoutException("SUNDIALS memory allocation failed\n");
+    throw BoutException("BOUT N_Vector failed\n");
   }
 
   // Put the variables into uvec
-  save_vars(N_VGetArrayPointer(uvec));
+  // save_vars(N_VGetArrayPointer(uvec));
 
   ASSERT1(solve_explicit or solve_implicit);
 

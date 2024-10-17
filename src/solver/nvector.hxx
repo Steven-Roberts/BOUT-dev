@@ -35,9 +35,31 @@
 
 namespace {
 template <typename T>
+T allReduce(const T local, const MPI_Op op = MPI_SUM) {
+  T global;
+  constexpr auto type = []() {
+    if constexpr (std::is_same_v<T, double>) {
+      return MPI_DOUBLE;
+    } else if constexpr (std::is_same_v<T, unsigned int>) {
+      return MPI_UNSIGNED;
+    }
+  }();
+  MPI_Allreduce(&local, &global, 1, type, op, BoutComm::get());
+  return global;
+}
+
+template <typename T>
 struct Content {
   T& field; // A Field2D or Field3D
   const bool own;
+  const bool evolve_bndry;
+  const sunindextype length;
+
+  Content(T& field, const bool own, const bool evolve_bndry)
+      : field(field), own(own), evolve_bndry(evolve_bndry),
+        length(allReduce(getRegion().size())) {}
+
+  auto getRegion() const { return field.getRegion(evolve_bndry ? RGN_ALL : RGN_NOBNDRY); }
 
   ~Content() {
     if (own) {
@@ -46,57 +68,56 @@ struct Content {
   }
 };
 
-template <typename R, typename T, typename... U>
-BoutReal fieldReduce(R reduce, bool allpe, const std::string& rgn, const T& f1,
-                     const U&... f2) {
+template <typename R, typename C, typename... D>
+BoutReal fieldReduce(const R reduce, const bool allpe, const C& c1, const D&... c2) {
   BoutReal result = 0;
-  const auto region = f1.getRegion(rgn);
-    BOUT_FOR_OMP(i, region, parallel for reduction(+:result)) {
-      result += reduce(f1[i], f2[i]...);
-    }
+  const auto region = c1.getRegion();
+  BOUT_FOR_OMP(i, region, parallel for reduction(+:result)) {
+    result += reduce(c1.field[i], c2.field[i]...);
+  }
 
-    if (allpe) {
-      BoutReal localresult = result;
-      MPI_Allreduce(&localresult, &result, 1, MPI_DOUBLE, MPI_MAX, BoutComm::get());
-    }
-    return result;
+  return allpe ? allReduce(result) : result;
 }
 
 template <typename T>
-BoutReal dotProd(const T& f1, const T& f2, bool allpe = false,
-                 const std::string& rgn = "RGN_NOBNDRY") {
-  return fieldReduce(std::multiplies(), allpe, rgn, f1, f2);
+BoutReal dotProd(const Content<T>& c1, const Content<T>& c2, const bool allpe) {
+  return fieldReduce(std::multiplies<BoutReal>(), allpe, c1, c2);
 }
 
 template <typename T>
-BoutReal weightedL2Norm(const T& f, const T& w, bool allpe = false,
-                        const std::string& rgn = "RGN_NOBNDRY") {
+BoutReal weightedL2Norm(const Content<T>& c1, const Content<T>& c2, const bool allpe) {
   return std::sqrt(fieldReduce(
-      [](const BoutReal v1, const BoutReal v2) { return std::pow(v1 * v2, 2); }, allpe,
-      rgn, f, w));
+      [](const auto v1, const auto v2) { return std::pow(v1 * v2, 2); }, allpe,
+      c1, c2));
 }
 
 template <typename T>
-BoutReal l1Norm(const T& f, bool allpe = false, const std::string& rgn = "RGN_NOBNDRY") {
-  return fieldReduce(std::abs<BoutReal>, allpe, rgn, f);
+BoutReal l1Norm(const Content<T>& c, const bool allpe) {
+  return fieldReduce(std::abs<BoutReal>, allpe, c);
+}
+
+template <typename T>
+Content<T>& N_VContent_Bout(const N_Vector v) {
+  return *static_cast<Content<T>*>(v->content);
 }
 } // namespace
 
 template <typename T>
 T& N_VField_Bout(const N_Vector v) {
-  return static_cast<Content<T>*>(v->content)->field;
+  return N_VContent_Bout<T>(v).field;
 }
 
 template <typename T, typename = bout::utils::EnableIfField<T>>
-N_Vector N_VNew_Bout(const SUNContext ctx, T& field, const bool own = false) {
+N_Vector N_VNew_Bout(const SUNContext ctx, T& field, const bool evolve_bndry,
+                     const bool own = false) {N_VNew_Bout
   N_Vector v = callWithSUNContext(N_VNewEmpty, ctx);
   if (v == nullptr) {
     throw BoutException("N_VNewEmpty failed\n");
   }
 
-  v->content = static_cast<void*>(new Content<T>({field, own}));
+  v->content = static_cast<void*>(new Content<T>(field, own, evolve_bndry));
 
-  v->ops->nvgetvectorid = []([[maybe_unused]] N_Vector x) {
+  v->ops->nvgetvectorid = [](N_Vector) {
     return SUNDIALS_NVEC_CUSTOM;
   };
 
@@ -110,14 +131,11 @@ N_Vector N_VNew_Bout(const SUNContext ctx, T& field, const bool own = false) {
     if (x == nullptr) {
       return;
     }
-    delete static_cast<Content<T>*>(x->content);
+    delete &N_VContent_Bout<T>(x);
     N_VFreeEmpty(x);
   };
 
-  v->ops->nvgetlength = [](N_Vector x) {
-    // Is this correct with MPI?
-    return static_cast<sunindextype>(N_VField_Bout<T>(x).size());
-  };
+  v->ops->nvgetlength = [](N_Vector x) { return N_VContent_Bout<T>(x).length; };
 
   v->ops->nvlinearsum = [](sunrealtype a, N_Vector x, sunrealtype b, N_Vector y,
                            N_Vector z) {
@@ -151,23 +169,23 @@ N_Vector N_VNew_Bout(const SUNContext ctx, T& field, const bool own = false) {
   };
 
   v->ops->nvdotprod = [](N_Vector x, N_Vector y) {
-    return dotProd(N_VField_Bout<T>(x), N_VField_Bout<T>(y), true);
+    return dotProd(N_VContent_Bout<T>(x), N_VContent_Bout<T>(y), true);
   };
 
   v->ops->nvmaxnorm = [](N_Vector x) { return max(abs(N_VField_Bout<T>(x)), true); };
 
   v->ops->nvwrmsnorm = [](N_Vector x, N_Vector y) {
     const auto sqrtLen = std::sqrt(static_cast<BoutReal>(N_VGetLength(x)));
-    return weightedL2Norm(N_VField_Bout<T>(x), N_VField_Bout<T>(y), true) / sqrtLen;
+    return weightedL2Norm(N_VContent_Bout<T>(x), N_VContent_Bout<T>(y), true) / sqrtLen;
   };
 
   v->ops->nvmin = [](N_Vector x) { return min(N_VField_Bout<T>(x), true); };
 
   v->ops->nvwl2norm = [](N_Vector x, N_Vector y) {
-    return weightedL2Norm(N_VField_Bout<T>(x), N_VField_Bout<T>(y), true);
+    return weightedL2Norm(N_VContent_Bout<T>(x), N_VContent_Bout<T>(y), true);
   };
 
-  v->ops->nvl1norm = [](N_Vector x) { return l1Norm(N_VField_Bout<T>(x), true); };
+  v->ops->nvl1norm = [](N_Vector x) { return l1Norm(N_VContent_Bout<T>(x), true); };
 
   /* Other functions to implement (most optional)
   N_Vector (*nvcloneempty)(N_Vector); // Probably not needed
