@@ -44,6 +44,7 @@ RegisterUnavailableSolver
 #include "bout/bout_enum_class.hxx"
 #include "bout/bout_types.hxx"
 #include "bout/sundials_backports.hxx"
+#include "../../nvector.hxx"
 
 #include <nvector/nvector_parallel.h>
 #include <sundials/sundials_config.h>
@@ -157,6 +158,32 @@ private:
   void loop_abstol_values_op(Ind2D i2d, BoutReal* abstolvec_data, int& p,
                              std::vector<BoutReal>& f2dtols,
                              std::vector<BoutReal>& f3dtols, bool bndry);
+
+  N_Vector nvector_from_state(const SUNContext ctx) {
+    std::vector<N_Vector> subvectors;
+    subvectors.reserve(f2d.size() + f3d.size());
+    const auto inserter = std::back_inserter(subvectors);
+
+    const auto var_str_to_nvector = [ctx](auto &var_str) {
+      return BoutNVector::create(ctx, var_str.var, var_str.evolve_bndry);
+    };
+    std::transform(f2d.begin(), f2d.end(), inserter, var_str_to_nvector);
+    std::transform(f3d.begin(), f3d.end(), inserter, var_str_to_nvector);
+    return BoutNVector::create(ctx, subvectors);
+  }
+
+  void swap_rhs_state(const N_Vector v) {
+    std::size_t i = 0;
+    for (auto &var_str : f2d) {
+      BoutNVector::swap(v, var_str.F_var, i);
+      i++;
+    }
+
+    for (auto &var_str : f3d) {
+      BoutNVector::swap(v, var_str.F_var, i);
+      i++;
+    }
+  }
 
   /// SPGMR solver structure
   SUNLinearSolver sun_solver{nullptr};

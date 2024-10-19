@@ -39,7 +39,6 @@
 #include "bout/output.hxx"
 #include "bout/unused.hxx"
 #include "bout/utils.hxx"
-#include "../../nvector.hxx"
 
 #include <arkode/arkode_arkstep.h>
 #include <arkode/arkode_bbdpre.h>
@@ -191,7 +190,8 @@ int ArkodeSolver::init() {
   //   throw BoutException("SUNDIALS memory allocation failed\n");
   // }
 
-  uvec = N_VNew_Bout(suncontext, *f3d.back().var, false);
+  // uvec = N_VNew_Bout(suncontext, *f3d.back().var, false);
+  uvec = nullptr;
   if (uvec == nullptr) {
     throw BoutException("BOUT N_Vector failed\n");
   }
