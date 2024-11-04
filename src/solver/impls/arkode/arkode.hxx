@@ -85,7 +85,7 @@ public:
   // These functions used internally (but need to be public)
   void rhs_e(BoutReal t, BoutReal* udata, BoutReal* dudata);
   void rhs_i(BoutReal t, BoutReal* udata, BoutReal* dudata);
-  void rhs(BoutReal t, BoutReal* udata, BoutReal* dudata);
+  void rhs(BoutReal t, N_Vector u, N_Vector du);
   void pre(BoutReal t, BoutReal gamma, BoutReal delta, BoutReal* udata, BoutReal* rvec,
            BoutReal* zvec);
   void jac(BoutReal t, BoutReal* ydata, BoutReal* vdata, BoutReal* Jvdata);
@@ -172,16 +172,20 @@ private:
     return BoutNVector::create(ctx, subvectors);
   }
 
-  void swap_rhs_state(const N_Vector v) {
+  void set_state(const N_Vector u, const N_Vector du = nullptr) {
     std::size_t i = 0;
     for (auto &var_str : f2d) {
-      BoutNVector::swap(v, var_str.F_var, i);
+      BoutNVector::swap(u, var_str.var, i);
+      BoutNVector::swap(du, var_str.F_var, i);
       i++;
     }
 
-    for (auto &var_str : f3d) {
-      BoutNVector::swap(v, var_str.F_var, i);
-      i++;
+    if (du != nullptr) {
+      for (auto &var_str : f3d) {
+        BoutNVector::swap(u, var_str.var, i);
+        BoutNVector::swap(du, var_str.F_var, i);
+        i++;
+      }
     }
   }
 

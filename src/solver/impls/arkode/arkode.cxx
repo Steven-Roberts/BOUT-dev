@@ -191,7 +191,7 @@ int ArkodeSolver::init() {
   // }
 
   // uvec = N_VNew_Bout(suncontext, *f3d.back().var, false);
-  uvec = nullptr;
+  uvec = nvector_from_state(suncontext);
   if (uvec == nullptr) {
     throw BoutException("BOUT N_Vector failed\n");
   }
@@ -602,7 +602,8 @@ BoutReal ArkodeSolver::run(BoutReal tout) {
   }
 
   // Copy variables
-  load_vars(N_VGetArrayPointer(uvec));
+  // load_vars(N_VGetArrayPointer(uvec));
+  set_state(uvec);
   // Call rhs function to get extra variables at this time
   run_rhs(simtime);
   // run_diffusive(simtime);
@@ -653,14 +654,16 @@ void ArkodeSolver::rhs_i(BoutReal t, BoutReal* udata, BoutReal* dudata) {
 /**************************************************************************
  *   Full  RHS function du = F(t, u)
  **************************************************************************/
-void ArkodeSolver::rhs(BoutReal t, BoutReal* udata, BoutReal* dudata) {
+void ArkodeSolver::rhs(BoutReal t, N_Vector u, N_Vector du) {
   TRACE("Running RHS: ArkodeSolver::rhs({:e})", t);
 
-  load_vars(udata);
+  // load_vars(udata);
+  set_state(u, du);
   ARKStepGetLastStep(arkode_mem, &hcur);
   // Call Implicit RHS function
   run_rhs(t);
-  save_derivs(dudata);
+  // save_derivs(dudata);
+  set_state(u, du);
 }
 
 /**************************************************************************
@@ -675,7 +678,7 @@ void ArkodeSolver::pre(BoutReal t, BoutReal gamma, BoutReal delta, BoutReal* uda
 
   if (!hasPreconditioner()) {
     // Identity (but should never happen)
-    const auto length = N_VGetLocalLength_Parallel(uvec);
+    const auto length = N_VGetLocalLength(uvec);
     std::copy(rvec, rvec + length, zvec);
     return;
   }
@@ -759,14 +762,14 @@ int arkode_rhs_implicit(BoutReal t, N_Vector u, N_Vector du, void* user_data) {
 
 int arkode_rhs(BoutReal t, N_Vector u, N_Vector du, void* user_data) {
 
-  BoutReal* udata = N_VGetArrayPointer(u);
-  BoutReal* dudata = N_VGetArrayPointer(du);
+  // BoutReal* udata = N_VGetArrayPointer(u);
+  // BoutReal* dudata = N_VGetArrayPointer(du);
 
   auto* s = static_cast<ArkodeSolver*>(user_data);
 
   // Calculate RHS function
   try {
-    s->rhs(t, udata, dudata);
+    s->rhs(t, u, du);
   } catch (BoutRhsFail& error) {
     return 1;
   }

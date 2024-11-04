@@ -46,7 +46,7 @@ private:
     MPI_Allreduce(&local, &global, 1, type, op, BoutComm::get());
     return global;
   }
-  
+
   template <typename T>
   struct Content {
     T* field;
@@ -58,11 +58,13 @@ private:
         : field(field), own(own), evolve_bndry(evolve_bndry),
           length(all_reduce(getRegion().size())) {}
 
-    auto getRegion() const { return field->getRegion(evolve_bndry ? RGN_ALL : RGN_NOBNDRY); }
+    auto getRegion() const {
+      return field->getRegion(evolve_bndry ? RGN_ALL : RGN_NOBNDRY);
+    }
 
     ~Content() {
       if (own) {
-        delete &field;
+        delete field;
       }
     }
   };
@@ -77,10 +79,11 @@ private:
     return *get_content<T>(v).field;
   }
 
-  template <typename T, typename R, typename ... V>
-  static BoutReal reduce_field(const R reduce, const bool allpe, const N_Vector v1, const V... v2) {
-      BoutReal result = 0;
-      const auto region = get_content<T>(v1).getRegion();
+  template <typename T, typename R, typename... V>
+  static BoutReal reduce_field(const R reduce, const bool allpe, const N_Vector v1,
+                               const V... v2) {
+    BoutReal result = 0;
+    const auto region = get_content<T>(v1).getRegion();
       BOUT_FOR_OMP(i, region, parallel for reduction(+:result)) {
         result += reduce(get_field<T>(v1)[i], get_field<T>(v2)[i]...);
       }
@@ -89,11 +92,11 @@ private:
   }
 
 public:
-  // NVector() = delete; // Enforce static access only
-  
+  BoutNVector() = delete; // Enforce static access only
+
   template <typename T, typename = bout::utils::EnableIfField<T>>
-  static N_Vector create(const SUNContext ctx, T *const field, const bool evolve_bndry,
-                      const bool own = false) {
+  static N_Vector create(const SUNContext ctx, T* const field, const bool evolve_bndry,
+                         const bool own = false) {
     N_Vector v = callWithSUNContext(N_VNewEmpty, ctx);
     if (v == nullptr) {
       throw BoutException("N_VNewEmpty failed\n");
@@ -104,7 +107,7 @@ public:
     v->ops->nvgetvectorid = [](N_Vector) { return SUNDIALS_NVEC_CUSTOM; };
 
     v->ops->nvclone = [](N_Vector x) {
-      Content<T> content = get_content<T>(x);
+      const Content<T>& content = get_content<T>(x);
       T* field_clone = new T(*content.field);
       field_clone->allocate();
       return create(x->sunctx, field_clone, content.evolve_bndry, true);
@@ -121,7 +124,7 @@ public:
     v->ops->nvgetlength = [](N_Vector x) { return get_content<T>(x).length; };
 
     v->ops->nvlinearsum = [](sunrealtype a, N_Vector x, sunrealtype b, N_Vector y,
-                            N_Vector z) {
+                             N_Vector z) {
       get_field<T>(z) = a * get_field<T>(x) + b * get_field<T>(y);
     };
 
@@ -143,9 +146,7 @@ public:
       get_field<T>(y) = abs(get_field<T>(x));
     };
 
-    v->ops->nvinv = [](N_Vector x, N_Vector y) {
-      get_field<T>(y) = 1 / get_field<T>(x);
-    };
+    v->ops->nvinv = [](N_Vector x, N_Vector y) { get_field<T>(y) = 1 / get_field<T>(x); };
 
     v->ops->nvaddconst = [](N_Vector x, sunrealtype a, N_Vector y) {
       get_field<T>(y) = a + get_field<T>(x);
@@ -164,9 +165,8 @@ public:
     v->ops->nvmin = [](N_Vector x) { return min(get_field<T>(x), true); };
 
     v->ops->nvwl2norm = [](N_Vector x, N_Vector y) {
-      return std::sqrt(reduce_field<T>([](const auto v1, const auto v2) {
-        return std::pow(v1 * v2, 2);
-      }, true, x, y));
+      return std::sqrt(reduce_field<T>(
+          [](const auto v1, const auto v2) { return std::pow(v1 * v2, 2); }, true, x, y));
     };
 
     v->ops->nvl1norm = [](N_Vector x) {
@@ -183,12 +183,12 @@ public:
   }
 
   template <typename T, typename = bout::utils::EnableIfField<T>>
-  static void swap(const N_Vector v, T* &field) {
+  static void swap(const N_Vector v, T*& field) {
     std::swap(get_content<T>(v).field, field);
   }
 
   template <typename T, typename = bout::utils::EnableIfField<T>>
-  static void swap(const N_Vector v, T* &field, std::size_t subvector) {
+  static void swap(const N_Vector v, T*& field, std::size_t subvector) {
     return swap(N_VGetSubvector_ManyVector(v, subvector), field);
   }
 };
