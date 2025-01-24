@@ -108,8 +108,12 @@ public:
 
     v->ops->nvclone = [](N_Vector x) {
       const Content<T>& content = get_content<T>(x);
-      T* field_clone = new T(*content.field);
+      // TODO: ensure no memory leaks
+      // T* field_clone = new T(*content.field);
+      T* field_clone = new T(content.field->getMesh(), content.field->getLocation(), content.field->getDirections());
       field_clone->allocate();
+      field_clone->copyBoundary(*content.field);
+      (*field_clone) = 42;
       return create(x->sunctx, field_clone, content.evolve_bndry, true);
     };
 
@@ -183,13 +187,13 @@ public:
   }
 
   template <typename T, typename = bout::utils::EnableIfField<T>>
-  static void swap(const N_Vector v, T*& field) {
-    std::swap(get_content<T>(v).field, field);
+  static void swap_qqq(const N_Vector v, T& field) {
+    swap(get_field<T>(v), field);
   }
 
   template <typename T, typename = bout::utils::EnableIfField<T>>
-  static void swap(const N_Vector v, T*& field, std::size_t subvector) {
-    return swap(N_VGetSubvector_ManyVector(v, subvector), field);
+  static void swap_qqq(const N_Vector v, T& field, std::size_t subvector) {
+    return swap_qqq(N_VGetSubvector_ManyVector(v, subvector), field);
   }
 };
 

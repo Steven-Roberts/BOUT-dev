@@ -595,7 +595,7 @@ BoutReal ArkodeSolver::run(BoutReal tout) {
 
   // Copy variables
   // load_vars(N_VGetArrayPointer(uvec));
-  set_state(uvec);
+  swap_state(uvec);
   // Call rhs function to get extra variables at this time
   run_rhs(simtime);
   // run_diffusive(simtime);
@@ -650,12 +650,12 @@ void ArkodeSolver::rhs(BoutReal t, N_Vector u, N_Vector du) {
   TRACE("Running RHS: ArkodeSolver::rhs({:e})", t);
 
   // load_vars(udata);
-  set_state(u, du);
+  swap_state(u, du);
   ARKodeGetLastStep(arkode_mem, &hcur);
   // Call Implicit RHS function
   run_rhs(t);
   // save_derivs(dudata);
-  set_state(u, du);
+  swap_state(u, du);
 }
 
 /**************************************************************************

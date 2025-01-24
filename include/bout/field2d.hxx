@@ -287,6 +287,8 @@ private:
   /// Array sizes (from fieldmesh). These are valid only if fieldmesh is not null
   int nx{-1}, ny{-1};
 
+public:
+
   /// Time-derivative, can be nullptr
   Field2D* deriv{nullptr};
 };

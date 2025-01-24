@@ -214,20 +214,23 @@ private:
     return BoutNVector::create(ctx, subvectors);
   }
 
-  void set_state(const N_Vector u, const N_Vector du = nullptr) {
+  void swap_state(const N_Vector u, const N_Vector du = nullptr) {
     std::size_t i = 0;
     for (auto &var_str : f2d) {
-      BoutNVector::swap(u, var_str.var, i);
-      BoutNVector::swap(du, var_str.F_var, i);
+      BoutNVector::swap_qqq(u, *var_str.var, i);
+      if (du != nullptr) {
+        BoutNVector::swap_qqq(du, *var_str.F_var, i);
+      }
       i++;
     }
 
-    if (du != nullptr) {
-      for (auto &var_str : f3d) {
-        BoutNVector::swap(u, var_str.var, i);
-        BoutNVector::swap(du, var_str.F_var, i);
-        i++;
+    for (auto &var_str : f3d) {
+      BoutNVector::swap_qqq(u, *var_str.var, i);
+      if (du != nullptr) {
+        BoutNVector::swap_qqq(du, *var_str.F_var, i);
       }
+      var_str.var->deriv = var_str.F_var;
+      i++;
     }
   }
 
