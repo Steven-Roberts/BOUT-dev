@@ -201,12 +201,12 @@ private:
                              std::vector<BoutReal>& f2dtols,
                              std::vector<BoutReal>& f3dtols, bool bndry);
 
-  N_Vector nvector_from_state(const SUNContext ctx) {
+  N_Vector nvector_from_state(const sundials::Context& ctx) {
     std::vector<N_Vector> subvectors;
     subvectors.reserve(f2d.size() + f3d.size());
     const auto inserter = std::back_inserter(subvectors);
 
-    const auto var_str_to_nvector = [ctx](auto &var_str) {
+    const auto var_str_to_nvector = [&ctx](auto &var_str) {
       return BoutNVector::create(ctx, var_str.var, var_str.evolve_bndry);
     };
     std::transform(f2d.begin(), f2d.end(), inserter, var_str_to_nvector);

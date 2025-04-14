@@ -94,10 +94,10 @@ private:
 public:
   BoutNVector() = delete; // Enforce static access only
 
-  template <typename T, typename = bout::utils::EnableIfField<T>>
-  static N_Vector create(const SUNContext ctx, T* const field, const bool evolve_bndry,
+  template <typename T, typename Ctx, typename = bout::utils::EnableIfField<T>>
+  static N_Vector create(Ctx&& ctx, T* const field, const bool evolve_bndry,
                          const bool own = false) {
-    N_Vector v = callWithSUNContext(N_VNewEmpty, ctx);
+    N_Vector v = callWithSUNContext(N_VNewEmpty, std::forward<Ctx>(ctx));
     if (v == nullptr) {
       throw BoutException("N_VNewEmpty failed\n");
     }
@@ -113,7 +113,6 @@ public:
       T* field_clone = new T(content.field->getMesh(), content.field->getLocation(), content.field->getDirections());
       field_clone->allocate();
       field_clone->copyBoundary(*content.field);
-      (*field_clone) = 42;
       return create(x->sunctx, field_clone, content.evolve_bndry, true);
     };
 
@@ -181,7 +180,7 @@ public:
   }
 
   template <typename V>
-  static N_Vector create(const SUNContext ctx, V& subvectors) {
+  static N_Vector create(const sundials::Context& ctx, V& subvectors) {
     return callWithSUNContext(N_VNew_ManyVector, ctx, std::size(subvectors),
                               std::data(subvectors));
   }
