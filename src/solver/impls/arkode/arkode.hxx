@@ -207,7 +207,7 @@ private:
     const auto inserter = std::back_inserter(subvectors);
 
     const auto var_str_to_nvector = [&ctx](auto &var_str) {
-      return BoutNVector::create(ctx, var_str.var, var_str.evolve_bndry);
+      return BoutNVector::create(ctx, *var_str.var, var_str.evolve_bndry);
     };
     std::transform(f2d.begin(), f2d.end(), inserter, var_str_to_nvector);
     std::transform(f3d.begin(), f3d.end(), inserter, var_str_to_nvector);
@@ -229,7 +229,7 @@ private:
       if (du != nullptr) {
         BoutNVector::swap_qqq(du, *var_str.F_var, i);
       }
-      var_str.var->deriv = var_str.F_var;
+      // var_str.var->deriv = var_str.F_var;
       i++;
     }
   }

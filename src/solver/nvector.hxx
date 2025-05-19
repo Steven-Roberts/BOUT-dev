@@ -49,22 +49,22 @@ private:
 
   template <typename T>
   struct Content {
-    T* field;
+    T& field;
     const bool own;
     const bool evolve_bndry;
     const sunindextype length;
 
-    Content(T* const field, const bool own, const bool evolve_bndry)
+    Content(T& field, const bool own, const bool evolve_bndry)
         : field(field), own(own), evolve_bndry(evolve_bndry),
           length(all_reduce(getRegion().size())) {}
 
     auto getRegion() const {
-      return field->getRegion(evolve_bndry ? RGN_ALL : RGN_NOBNDRY);
+      return field.getRegion(evolve_bndry ? RGN_ALL : RGN_NOBNDRY);
     }
 
     ~Content() {
       if (own) {
-        delete field;
+        delete &field;
       }
     }
   };
@@ -76,7 +76,7 @@ private:
 
   template <typename T>
   static T& get_field(const N_Vector v) {
-    return *get_content<T>(v).field;
+    return get_content<T>(v).field;
   }
 
   template <typename T, typename R, typename... V>
@@ -95,7 +95,7 @@ public:
   BoutNVector() = delete; // Enforce static access only
 
   template <typename T, typename Ctx, typename = bout::utils::EnableIfField<T>>
-  static N_Vector create(Ctx&& ctx, T* const field, const bool evolve_bndry,
+  static N_Vector create(Ctx&& ctx, T& field, const bool evolve_bndry,
                          const bool own = false) {
     N_Vector v = callWithSUNContext(N_VNewEmpty, std::forward<Ctx>(ctx));
     if (v == nullptr) {
@@ -110,10 +110,10 @@ public:
       const Content<T>& content = get_content<T>(x);
       // TODO: ensure no memory leaks
       // T* field_clone = new T(*content.field);
-      T* field_clone = new T(content.field->getMesh(), content.field->getLocation(), content.field->getDirections());
+      T* field_clone = new T(content.field.getMesh(), content.field.getLocation(), content.field.getDirections());
       field_clone->allocate();
-      field_clone->copyBoundary(*content.field);
-      return create(x->sunctx, field_clone, content.evolve_bndry, true);
+      field_clone->copyBoundary(content.field);
+      return create(x->sunctx, *field_clone, content.evolve_bndry, true);
     };
 
     v->ops->nvdestroy = [](N_Vector x) {
@@ -181,8 +181,10 @@ public:
 
   template <typename V>
   static N_Vector create(const sundials::Context& ctx, V& subvectors) {
-    return callWithSUNContext(N_VNew_ManyVector, ctx, std::size(subvectors),
-                              std::data(subvectors));
+    const auto v =  callWithSUNContext(N_VNew_ManyVector, ctx, std::size(subvectors),
+                                       std::data(subvectors));
+    ((N_VectorContent_ManyVector)v->content)->own_data = true;
+    return v;
   }
 
   template <typename T, typename = bout::utils::EnableIfField<T>>
@@ -192,7 +194,7 @@ public:
 
   template <typename T, typename = bout::utils::EnableIfField<T>>
   static void swap_qqq(const N_Vector v, T& field, std::size_t subvector) {
-    return swap_qqq(N_VGetSubvector_ManyVector(v, subvector), field);
+    return BoutNVector::swap_qqq(N_VGetSubvector_ManyVector(v, subvector), field);
   }
 };
 
