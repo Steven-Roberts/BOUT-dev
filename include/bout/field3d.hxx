@@ -500,11 +500,9 @@ private:
   /// Internal data array. Handles allocation/freeing of memory
   Array<BoutReal> data;
 
-public:
   /// Time derivative (may be nullptr)
   Field3D* deriv{nullptr};
 
-private:
   /// Fields containing values along Y
   std::vector<Field3D> yup_fields{}, ydown_fields{};
 
