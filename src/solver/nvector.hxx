@@ -188,13 +188,14 @@ public:
   }
 
   template <typename T, typename = bout::utils::EnableIfField<T>>
-  static void swap_qqq(const N_Vector v, T& field) {
+  static void swap(const N_Vector v, T& field) {
+    using ::swap;
     swap(get_field<T>(v), field);
   }
 
   template <typename T, typename = bout::utils::EnableIfField<T>>
-  static void swap_qqq(const N_Vector v, T& field, std::size_t subvector) {
-    return BoutNVector::swap_qqq(N_VGetSubvector_ManyVector(v, subvector), field);
+  static void swap(const N_Vector v, T& field, std::size_t subvector) {
+    return BoutNVector::swap(N_VGetSubvector_ManyVector(v, subvector), field);
   }
 };
 

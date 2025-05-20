@@ -123,12 +123,12 @@ public:
   BoutReal run(BoutReal tout);
 
   // These functions used internally (but need to be public)
-  void rhs_e(BoutReal t, BoutReal* udata, BoutReal* dudata);
-  void rhs_i(BoutReal t, BoutReal* udata, BoutReal* dudata);
+  void rhs_e(BoutReal t, N_Vector u, N_Vector du);
+  void rhs_i(BoutReal t, N_Vector u, N_Vector du);
   void rhs(BoutReal t, N_Vector u, N_Vector du);
-  void pre(BoutReal t, BoutReal gamma, BoutReal delta, BoutReal* udata, BoutReal* rvec,
-           BoutReal* zvec);
-  void jac(BoutReal t, BoutReal* ydata, BoutReal* vdata, BoutReal* Jvdata);
+  void pre(BoutReal t, BoutReal gamma, BoutReal delta, N_Vector u, N_Vector rvec,
+           N_Vector zvec);
+  void jac(BoutReal t, N_Vector y, N_Vector v, N_Vector Jv);
 
 private:
   BoutReal hcur; //< Current internal timestep
@@ -214,22 +214,28 @@ private:
     return BoutNVector::create(ctx, subvectors);
   }
 
-  void swap_state(const N_Vector u, const N_Vector du = nullptr) {
+  void swap_state(const N_Vector u) {
     std::size_t i = 0;
     for (auto &var_str : f2d) {
-      BoutNVector::swap_qqq(u, *var_str.var, i);
-      if (du != nullptr) {
-        BoutNVector::swap_qqq(du, *var_str.F_var, i);
-      }
+      BoutNVector::swap(u, *var_str.var, i);
       i++;
     }
 
     for (auto &var_str : f3d) {
-      BoutNVector::swap_qqq(u, *var_str.var, i);
-      if (du != nullptr) {
-        BoutNVector::swap_qqq(du, *var_str.F_var, i);
-      }
-      // var_str.var->deriv = var_str.F_var;
+      BoutNVector::swap(u, *var_str.var, i);
+      i++;
+    }
+  }
+
+  void swap_deriv(const N_Vector du) {
+    std::size_t i = 0;
+    for (auto &var_str : f2d) {
+      BoutNVector::swap(du, *var_str.F_var, i);
+      i++;
+    }
+
+    for (auto &var_str : f3d) {
+      BoutNVector::swap(du, *var_str.F_var, i);
       i++;
     }
   }
