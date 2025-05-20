@@ -209,8 +209,8 @@ private:
     const auto var_str_to_nvector = [&ctx](auto &var_str) {
       return BoutNVector::create(ctx, *var_str.var, var_str.evolve_bndry);
     };
-    std::transform(f2d.begin(), f2d.end(), inserter, var_str_to_nvector);
-    std::transform(f3d.begin(), f3d.end(), inserter, var_str_to_nvector);
+    std::transform(f2d.cbegin(), f2d.cend(), inserter, var_str_to_nvector);
+    std::transform(f3d.cbegin(), f3d.cend(), inserter, var_str_to_nvector);
     return BoutNVector::create(ctx, subvectors);
   }
 
