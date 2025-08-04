@@ -33,17 +33,15 @@
 
 class BoutNVector {
 private:
-  template <typename V>
-  static V all_reduce(const V local, const MPI_Op op = MPI_SUM) {
-    V global;
-    static constexpr auto type = []() {
-      if constexpr (std::is_same_v<V, double>) {
-        return MPI_DOUBLE;
-      } else if constexpr (std::is_same_v<V, unsigned int>) {
-        return MPI_UNSIGNED;
-      }
-    }();
-    MPI_Allreduce(&local, &global, 1, type, op, BoutComm::get());
+  static double all_reduce(const double local, const MPI_Op op = MPI_SUM) {
+    double global;
+    MPI_Allreduce(&local, &global, 1, MPI_DOUBLE, op, BoutComm::get());
+    return global;
+  }
+
+  static double all_reduce(const unsigned int local, const MPI_Op op = MPI_SUM) {
+    unsigned int global;
+    MPI_Allreduce(&local, &global, 1, MPI_UNSIGNED, op, BoutComm::get());
     return global;
   }
 
@@ -189,8 +187,7 @@ public:
 
   template <typename T, typename = bout::utils::EnableIfField<T>>
   static void swap(const N_Vector v, T& field) {
-    using ::swap;
-    swap(get_field<T>(v), field);
+    field.swapData(get_field<T>(v));
   }
 
   template <typename T, typename = bout::utils::EnableIfField<T>>

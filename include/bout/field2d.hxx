@@ -271,7 +271,8 @@ public:
   void applyBoundary(const std::string& region, const std::string& condition);
   void applyTDerivBoundary() override;
   void setBoundaryTo(const Field2D& f2d); ///< Copy the boundary region
-
+  
+  void swapData(Field2D& other);
   friend void swap(Field2D& first, Field2D& second) noexcept;
 
   int size() const override { return nx * ny; };
