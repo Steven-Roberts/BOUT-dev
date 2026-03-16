@@ -63,6 +63,7 @@ class Mesh;
 #include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 class BoundaryRegion;
 class BoundaryRegionPar;
@@ -298,11 +299,6 @@ public:
   ///
   /// @param g  The group of fields to communicate. Guard cells will be modified
   void communicateYZ(FieldGroup& g);
-
-  /*!
-   * Communicate an X-Z field
-   */
-  virtual void communicate(FieldPerp& f);
 
   /*!
    * Send a list of FieldData objects
@@ -814,8 +810,8 @@ protected:
   const std::vector<int> readInts(const std::string& name, int n);
 
   /// Calculates the size of a message for a given x and y range
-  int msg_len(const std::vector<FieldData*>& var_list, int xge, int xlt, int yge,
-              int ylt);
+  int msg_len(const std::vector<Field*>& var_list, int xge, int xlt, int yge,
+              int ylt) const;
 
   /// Initialise derivatives
   void derivs_init(Options* options);
