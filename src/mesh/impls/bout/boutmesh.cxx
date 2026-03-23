@@ -2439,14 +2439,13 @@ void BoutMesh::overlapHandleMemory(BoutMesh* yup, BoutMesh* ydown, BoutMesh* xin
 int BoutMesh::pack_data(const std::vector<Field*>& var_list, int xge, int xlt, int yge,
                         int ylt, BoutReal* buffer) const {
 
-  using enum Field::FieldType;
   int len = 0;
   const int zge = 0;
   const int zlt = LocalNz;
 
   for (const auto& var : var_list) {
     switch (var->field_type()) {
-    case field3d: {
+    case Field::FieldType::field3d: {
       const auto* var3d_ref_ptr = dynamic_cast<Field3D*>(var);
       ASSERT0(var3d_ref_ptr != nullptr);
       const auto& var3d_ref = *var3d_ref_ptr;
@@ -2460,7 +2459,7 @@ int BoutMesh::pack_data(const std::vector<Field*>& var_list, int xge, int xlt, i
       }
       break;
     }
-    case field2d: {
+    case Field::FieldType::field2d: {
       const auto* var2d_ref_ptr = dynamic_cast<Field2D*>(var);
       ASSERT0(var2d_ref_ptr != nullptr);
       const auto& var2d_ref = *var2d_ref_ptr;
@@ -2472,7 +2471,7 @@ int BoutMesh::pack_data(const std::vector<Field*>& var_list, int xge, int xlt, i
       }
       break;
     }
-    case fieldperp: {
+    case Field::FieldType::fieldperp: {
       const auto* varperp_ref_ptr = dynamic_cast<FieldPerp*>(var);
       ASSERT0(varperp_ref_ptr != nullptr);
       const auto& varperp_ref = *varperp_ref_ptr;
@@ -2493,14 +2492,13 @@ int BoutMesh::pack_data(const std::vector<Field*>& var_list, int xge, int xlt, i
 int BoutMesh::unpack_data(const std::vector<Field*>& var_list, int xge, int xlt, int yge,
                           int ylt, const BoutReal* buffer) const {
 
-  using enum Field::FieldType;
   int len = 0;
   const int zge = 0;
   const int zlt = LocalNz;
 
   for (const auto& var : var_list) {
     switch (var->field_type()) {
-    case field3d: {
+    case Field::FieldType::field3d: {
       auto* var3d_ref_ptr = dynamic_cast<Field3D*>(var);
       ASSERT0(var3d_ref_ptr != nullptr);
       auto& var3d_ref = *var3d_ref_ptr;
@@ -2514,7 +2512,7 @@ int BoutMesh::unpack_data(const std::vector<Field*>& var_list, int xge, int xlt,
       }
       break;
     }
-    case field2d: {
+    case Field::FieldType::field2d: {
       auto* var2d_ref_ptr = dynamic_cast<Field2D*>(var);
       ASSERT0(var2d_ref_ptr != nullptr);
       auto& var2d_ref = *var2d_ref_ptr;
@@ -2526,7 +2524,7 @@ int BoutMesh::unpack_data(const std::vector<Field*>& var_list, int xge, int xlt,
       }
       break;
     }
-    case fieldperp: {
+    case Field::FieldType::fieldperp: {
       auto* varperp_ref_ptr = dynamic_cast<FieldPerp*>(var);
       ASSERT0(varperp_ref_ptr != nullptr);
       auto& varperp_ref = *varperp_ref_ptr;

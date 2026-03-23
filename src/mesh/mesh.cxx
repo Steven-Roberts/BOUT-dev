@@ -380,8 +380,6 @@ int Mesh::msg_len(const std::vector<Field*>& var_list, int xge, int xlt, int yge
                   int ylt) const {
   int len = 0;
 
-  using enum Field::FieldType;
-
   const auto x_length = xlt - xge;
   const auto y_length = ylt - yge;
   const auto z_length = LocalNz;
@@ -389,13 +387,13 @@ int Mesh::msg_len(const std::vector<Field*>& var_list, int xge, int xlt, int yge
   /// Loop over variables
   for (const auto& var : var_list) {
     switch (var->field_type()) {
-    case field3d:
+    case Field::FieldType::field3d:
       len += x_length * y_length * z_length * var->elementSize();
       break;
-    case field2d:
+    case Field::FieldType::field2d:
       len += x_length * y_length * var->elementSize();
       break;
-    case fieldperp:
+    case Field::FieldType::fieldperp:
       len += x_length * z_length * var->elementSize();
       break;
     }
