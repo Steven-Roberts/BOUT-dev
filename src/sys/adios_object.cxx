@@ -57,10 +57,11 @@ ADIOSStream::~ADIOSStream() {
   }
 }
 
-ADIOSStream& ADIOSStream::ADIOSGetStream(const std::string& fname, adios2::Mode mode) {
+ADIOSStream& ADIOSStream::ADIOSGetStream(const std::string& fname, adios2::Mode mode,
+                                         const std::string& engineType) {
   auto it = adiosStreams.find(fname);
   if (it == adiosStreams.end()) {
-    it = adiosStreams.emplace(fname, ADIOSStream(fname, mode)).first;
+    it = adiosStreams.emplace(fname, ADIOSStream(fname, mode, engineType)).first;
   }
   return it->second;
 }

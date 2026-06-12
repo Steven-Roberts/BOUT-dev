@@ -43,7 +43,8 @@ public:
   int adiosStep = 0;
 
   /** create or return the ADIOSStream based on the target file name */
-  static ADIOSStream& ADIOSGetStream(const std::string& fname, adios2::Mode mode);
+  static ADIOSStream& ADIOSGetStream(const std::string& fname, adios2::Mode mode,
+                                     const std::string& engineType = "BP5");
 
   ~ADIOSStream();
 
@@ -107,7 +108,8 @@ public:
   }
 
 private:
-  ADIOSStream(const std::string& fname, adios2::Mode mode)
+  ADIOSStream(const std::string& fname, adios2::Mode mode,
+              const std::string& engineType)
       : fname(fname), file_mode(mode) {
 
     ADIOSPtr adiosp = GetADIOSPtr();
@@ -116,7 +118,7 @@ private:
       io = adiosp->AtIO(ioname);
     } catch (const std::invalid_argument& e) {
       io = adiosp->DeclareIO(ioname);
-      io.SetEngine("BP5");
+      io.SetEngine(engineType);
     }
   };
 
