@@ -33,7 +33,7 @@ needed to make the solver available.
 
 .. _tab-solvers:
 .. table:: Available time integration solvers
-	   
+
    +---------------+-----------------------------------------+------------------------+
    | Name          | Description                             | Compile options        |
    +===============+=========================================+========================+
@@ -68,7 +68,7 @@ given in table :numref:`tab-solveropts`.
 
 .. _tab-solveropts:
 .. table:: Time integration solver options
-	   
+
    +--------------------------+--------------------------------------------+-------------------------------------+
    | Option                   | Description                                | Solvers used                        |
    +==========================+============================================+=====================================+
@@ -104,12 +104,39 @@ given in table :numref:`tab-solveropts`.
    +--------------------------+--------------------------------------------+-------------------------------------+
    | diagnose                 | Collect and print additional diagnostics   | cvode, imexbdf2, beuler             |
    +--------------------------+--------------------------------------------+-------------------------------------+
+   | nvector                  | ``N_Vector`` backend for SUNDIALS solvers: | cvode, ida, arkode                  |
+   |                          | ``sundials`` or ``manyvector``             |                                     |
+   +--------------------------+--------------------------------------------+-------------------------------------+
 
 |
 
 The most commonly changed options are the absolute and relative solver
 tolerances, ``atol`` and ``rtol`` which should be varied to check
 convergence.
+
+SUNDIALS ``N_Vector`` backends
+------------------------------
+
+The SUNDIALS-based solvers ``cvode``, ``ida``, and ``arkode`` can select
+the ``N_Vector`` backend at runtime using ``solver:nvector``:
+
+.. code-block:: cfg
+
+    [solver]
+    type = cvode
+    nvector = sundials
+
+Valid values are:
+
+- ``sundials`` uses the standard SUNDIALS parallel ``N_Vector``. This is the
+  default.
+- ``manyvector`` uses the BOUT++ field-backed custom ``N_Vector`` built on top
+  of SUNDIALS ManyVector support.
+
+The ``manyvector`` option is only available when BOUT++ was built with SUNDIALS
+ManyVector support. If ``solver:nvector=manyvector`` is selected in a build
+that does not provide this support, solver initialisation will throw an
+exception.
 
 CVODE
 -----
@@ -1278,7 +1305,9 @@ implement the outputMonitor method of PhysicsModel::
     int outputMonitor(BoutReal simtime, int iter, int nout)
 
 The first input is the current simulation time, the second is the output
-number, and the last is the total number of outputs requested.
+number, and the last is the total number of outputs requested. If an initial
+dump is written, it is output number ``0``. Solver output steps are numbered
+from ``1`` to ``nout``, so ``iter == nout`` indicates the final output.
 This method is called by a monitor object PhysicsModel::modelMonitor, which
 writes the restart files at the same time. You can change the frequency at which
 the monitor is called by calling, in PhysicsModel::init::
@@ -1303,7 +1332,9 @@ returns an int::
 
 The first input is the solver object, the second is the current
 simulation time, the third is the output number, and the last is the
-total number of outputs requested. To get the solver to call this
+total number of outputs requested. As for ``outputMonitor()``, output number
+``0`` is reserved for the initial dump when it is written, and solver output
+steps are numbered from ``1`` to ``NOUT``. To get the solver to call this
 function every output time, define a `MyOutputMonitor` object as a member of your
 PhysicsModel::
 
