@@ -6,7 +6,6 @@
 
 #include "bout/adios_object.hxx"
 #include "bout/array.hxx"
-#include "bout/assert.hxx"
 #include "bout/bout_types.hxx"
 #include "bout/boutexception.hxx"
 #include "bout/field2d.hxx"
@@ -17,7 +16,6 @@
 #include "bout/output.hxx"
 #include "bout/sys/timer.hxx"
 #include "bout/sys/variant.hxx"
-#include "bout/traits.hxx"
 #include "bout/utils.hxx"
 
 #include <adios2.h> // IWYU pragma: keep
@@ -25,13 +23,11 @@
 #include <fmt/ranges.h>
 
 #include <algorithm>
-#include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <iterator>
 #include <stdexcept>
 #include <string>
-#include <utility>
 #include <vector>
 
 namespace {
@@ -43,115 +39,9 @@ auto to_int_dims(const adios2::Dims& dims) {
   return int_dims;
 }
 
-// Helper class to construct Adios hyperslices
-struct Selection {
-  // Offset of this processor's data into the global array
-  adios2::Dims start;
-  // The size of the mapped region
-  adios2::Dims count;
-  // Where the actual data starts in data pointer (to exclude ghost cells)
-  adios2::Dims mem_start;
-  // The actual size of data pointer in memory (including ghost cells)
-  adios2::Dims mem_count;
-  // Global shape, including boundaries but not guard cells
-  adios2::Dims shape;
-  // Shape of the local variable to read into
-  std::vector<int> dims;
-
-  // Distributed Field/Array/Matrix/Tensor
-  bool should_set_selection{false};
-
-  Selection(const std::vector<std::string>& dim_names, const std::vector<int>& dim_sizes,
-            const Mesh& mesh) {
-    const auto ndims = dim_names.size();
-    const bool dim0_is_rank = ndims > 0 ? (dim_names[0] == "rank") : false;
-    const bool dim0_is_x = ndims > 0 ? (dim_names[0] == "x") : false;
-    const bool dim1_is_y = ndims > 1 ? (dim_names[1] == "y") : false;
-    const bool dim1_is_z = ndims > 1 ? (dim_names[1] == "z") : false;
-    const bool dim2_is_z = ndims > 2 ? (dim_names[2] == "z") : false;
-
-    should_set_selection = dim0_is_rank or (ndims == 2 and dim0_is_x and dim1_is_y)
-                           or (ndims == 2 and dim0_is_x and dim1_is_z)
-                           or (ndims == 3 and dim0_is_x and dim1_is_y and dim2_is_z);
-
-    if (dim0_is_rank) {
-      const auto ndim_sizes = dim_sizes.size();
-      ASSERT3(ndim_sizes > 1);
-
-      // This is a distributed array, so the local variable is going
-      // to be shape (dim_sizes[1]...) (that is, drop the rank)
-      dims.push_back(dim_sizes[1]);
-      // but we tell adios to read our rank's bit with the full ndims
-      start = {static_cast<std::size_t>(BoutComm::rank()), 0};
-      count = {std::size_t{1}, static_cast<std::size_t>(dim_sizes[0])};
-
-      if (ndim_sizes > 2) {
-        dims.push_back(dim_sizes[2]);
-        start.push_back(0);
-        count.push_back(dim_sizes[1]);
-      }
-      if (ndim_sizes > 3) {
-        dims.push_back(dim_sizes[3]);
-        start.push_back(0);
-        count.push_back(dim_sizes[2]);
-      }
-      mem_count = count;
-      mem_start = start;
-      return;
-    }
-
-    if (ndims > 0) {
-      dims.push_back(dim0_is_x ? mesh.LocalNx : dim_sizes[0]);
-    }
-    if (ndims > 1) {
-      if (dim1_is_y) {
-        dims.push_back(mesh.LocalNy);
-      } else if (dim1_is_z) {
-        dims.push_back(mesh.LocalNz);
-      } else {
-        dims.push_back(dim_sizes[1]);
-      }
-    }
-    if (ndims > 2) {
-      dims.push_back(dim2_is_z ? mesh.LocalNz : dim_sizes[2]);
-    }
-
-    shape.push_back(static_cast<std::size_t>(mesh.GlobalNx));
-    start.push_back(static_cast<std::size_t>(mesh.MapGlobalX));
-    count.push_back(static_cast<std::size_t>(mesh.MapCountX));
-    mem_start.push_back(static_cast<std::size_t>(mesh.MapLocalX));
-    mem_count.push_back(static_cast<std::size_t>(mesh.LocalNx));
-
-    if (dim1_is_y) {
-      shape.push_back(static_cast<std::size_t>(mesh.GlobalNy));
-      start.push_back(static_cast<std::size_t>(mesh.MapGlobalY));
-      count.push_back(static_cast<std::size_t>(mesh.MapCountY));
-      mem_start.push_back(static_cast<std::size_t>(mesh.MapLocalY));
-      mem_count.push_back(static_cast<std::size_t>(mesh.LocalNy));
-    } else if (dim1_is_z) {
-      shape.push_back(static_cast<std::size_t>(mesh.GlobalNz));
-      start.push_back(static_cast<std::size_t>(mesh.MapGlobalZ));
-      count.push_back(static_cast<std::size_t>(mesh.MapCountZ));
-      mem_start.push_back(static_cast<std::size_t>(mesh.MapLocalZ));
-      mem_count.push_back(static_cast<std::size_t>(mesh.LocalNz));
-    }
-
-    if (dim2_is_z) {
-      shape.push_back(static_cast<std::size_t>(mesh.GlobalNz));
-      start.push_back(static_cast<std::size_t>(mesh.MapGlobalZ));
-      count.push_back(static_cast<std::size_t>(mesh.MapCountZ));
-      mem_start.push_back(static_cast<std::size_t>(mesh.MapLocalZ));
-      mem_count.push_back(static_cast<std::size_t>(mesh.LocalNz));
-    }
-  }
-
-  auto selection() const { return adios2::Box<adios2::Dims>{start, count}; }
-  auto memorySelection() const { return adios2::Box<adios2::Dims>{mem_start, mem_count}; }
-};
-
 template <template <class> class T, class U>
 auto read_variable(adios2::IO& io, adios2::Engine& reader, const std::string& name,
-                   const Selection& selection, T<U>& value) {
+                   const bout::ADIOSSelection& selection, T<U>& value) {
   auto variable = io.InquireVariable<U>(name);
 
   if (selection.should_set_selection) {
@@ -213,7 +103,7 @@ Options readVariable(adios2::Engine& reader, adios2::IO& io, const std::string& 
       io.InquireAttribute<std::string>(fmt::format("{}/__xarray_dimensions__", name))
           .Data();
 
-  const auto selection = Selection(dims_attr, dims, *mesh);
+  const auto selection = bout::ADIOSSelection(dims_attr, dims, *mesh);
   const auto ndims = selection.dims.size();
 
   switch (ndims) {
@@ -421,144 +311,7 @@ void OptionsADIOS::verifyTimesteps() const {
 }
 } // namespace bout
 
-const std::vector<std::string> DIMS_X = {"x"};
-const std::vector<std::string> DIMS_XY = {"x", "y"};
-const std::vector<std::string> DIMS_XZ = {"x", "z"};
-const std::vector<std::string> DIMS_XYZ = {"x", "y", "z"};
-
 namespace {
-using bout::utils::tuple_index_sequence;
-
-template <class Tuple, std::size_t... I>
-auto make_shape_impl(std::size_t first, const Tuple& t,
-                     std::index_sequence<I...> /* index */) {
-  return adios2::Dims{first, static_cast<std::size_t>(std::get<I>(t))...};
-}
-// Return an `adios2::Dims` with value ``{first, value.shape()[0]...}``
-template <class T>
-auto make_shape(std::size_t first, const T& value) {
-  const auto shape = value.shape();
-  return make_shape_impl(first, shape, tuple_index_sequence<decltype(shape)>{});
-}
-
-template <class Tuple, std::size_t... I>
-auto make_start_impl(const Tuple& t, std::index_sequence<I...> /* index */) {
-  // Hey look, a legitimate use of the comma operator to get a bunch
-  // of zeros the length of the index_sequence!
-  return adios2::Dims{static_cast<std::size_t>(BoutComm::rank()),
-                      (std::get<I>(t), std::size_t{0})...};
-}
-// Return an `adios2::Dims` with value ``{rank, 0...}``, with as many zeros as the dimension of ``T``
-template <class T>
-auto make_start(const T& value) {
-  const auto shape = value.shape();
-  return make_start_impl(shape, tuple_index_sequence<decltype(shape)>{});
-}
-
-template <std::size_t... I>
-auto make_dims_impl(std::index_sequence<I...> /*index*/) {
-  using namespace std::string_literals;
-  return std::vector{"rank"s, (fmt::format("dim_{}", I))...};
-}
-// Return vector of dimension names: `{"rank", "dim_0", ...}`
-template <class T>
-auto make_dims(const T& value) {
-  return make_dims_impl(tuple_index_sequence<decltype(value.shape())>{});
-}
-
-/// Visit a variant type, and put the data into a NcVar
-struct ADIOSPutVarVisitor {
-  ADIOSPutVarVisitor(const std::string& name, bout::ADIOSStream& stream)
-      : varname(name), stream(stream) {}
-  template <typename T>
-  void operator()(const T& value) {
-    adios2::Variable<T> var = stream.GetValueVariable<T>(varname);
-    stream.engine().Put(var, value);
-  }
-
-  void operator()(const Array<int>& value) { amt_put_helper(value); }
-  void operator()(const Array<BoutReal>& value) { amt_put_helper(value); }
-  void operator()(const Matrix<int>& value) { amt_put_helper(value); }
-  void operator()(const Matrix<BoutReal>& value) { amt_put_helper(value); }
-  void operator()(const Tensor<int>& value) { amt_put_helper(value); }
-  void operator()(const Tensor<BoutReal>& value) { amt_put_helper(value); }
-  void operator()(bool value) {
-    // Scalars are only written from processor 0
-    if (BoutComm::rank() != 0) {
-      return;
-    }
-    stream.engine().Put(stream.GetValueVariable<int>(varname), static_cast<int>(value));
-  }
-  void operator()(int value) {
-    // Scalars are only written from processor 0
-    if (BoutComm::rank() != 0) {
-      return;
-    }
-    stream.engine().Put(stream.GetValueVariable<int>(varname), value);
-  }
-  void operator()(BoutReal value) {
-    // Scalars are only written from processor 0
-    if (BoutComm::rank() != 0) {
-      return;
-    }
-    stream.engine().Put(stream.GetValueVariable<BoutReal>(varname), value);
-  }
-
-  void operator()(const std::string& value) {
-    // Scalars are only written from processor 0
-    if (BoutComm::rank() != 0) {
-      return;
-    }
-    stream.engine().Put<std::string>(stream.GetValueVariable<std::string>(varname), value,
-                                     adios2::Mode::Sync);
-  }
-
-  void operator()(const Field2D& value) {
-    // Empty dim_sizes is fine because we provide full list of dim_names
-    auto selection = Selection(DIMS_XY, {}, *value.getMesh());
-    auto var = stream.GetArrayVariable<BoutReal>(varname, selection.shape, DIMS_XY,
-                                                 BoutComm::rank());
-    var.SetSelection(selection.selection());
-    var.SetMemorySelection(selection.memorySelection());
-    stream.engine().Put(var, &value(0, 0));
-  }
-
-  void operator()(const Field3D& value) {
-    // Empty dim_sizes is fine because we provide full list of dim_names
-    auto selection = Selection(DIMS_XYZ, {}, *value.getMesh());
-    auto var = stream.GetArrayVariable<BoutReal>(varname, selection.shape, DIMS_XYZ,
-                                                 BoutComm::rank());
-    var.SetSelection(selection.selection());
-    var.SetMemorySelection(selection.memorySelection());
-    stream.engine().Put(var, &value(0, 0, 0));
-  }
-
-  void operator()(const FieldPerp& value) {
-    // Empty dim_sizes is fine because we provide full list of dim_names
-    auto selection = Selection(DIMS_XZ, {}, *value.getMesh());
-    auto var = stream.GetArrayVariable<BoutReal>(varname, selection.shape, DIMS_XZ,
-                                                 BoutComm::rank());
-    var.SetSelection(selection.selection());
-    var.SetMemorySelection(selection.memorySelection());
-    stream.engine().Put<BoutReal>(var, &value(0, 0));
-  }
-
-private:
-  // Ok to keep const/refs here as visitor is only a temporary
-  const std::string& varname; // NOLINT(*-avoid-const-or-ref-data-members)
-  bout::ADIOSStream& stream;  // NOLINT(*-avoid-const-or-ref-data-members)
-
-  // helper for `Array`, `Matrix`, `Tensor`
-  template <template <class> class T, class U>
-  void amt_put_helper(const T<U>& value) {
-    const auto shape = make_shape(static_cast<std::size_t>(BoutComm::size()), value);
-    auto var =
-        stream.GetArrayVariable<U>(varname, shape, make_dims(value), BoutComm::rank());
-    var.SetSelection({make_start(value), make_shape(1, value)});
-    stream.engine().Put<U>(var, value.begin());
-  }
-};
-
 /// Visit a variant type, and put the data into a NcVar
 struct ADIOSPutAttVisitor {
   ADIOSPutAttVisitor(const std::string& varname, const std::string& attrname,
@@ -618,7 +371,9 @@ void writeGroup(const Options& options, bout::ADIOSStream& stream,
         // Note: ADIOS2 uses '/' to as a group separator; BOUT++ uses ':'
         const std::string varname =
             groupname.empty() ? name : fmt::format("{}/{}", groupname, name);
-        bout::utils::visit(ADIOSPutVarVisitor(varname, stream), child.value);
+        bout::utils::visit(
+            [&](const auto& value) { bout::adiosPut(stream, varname, value); },
+            child.value);
 
         // Write attributes
         if (BoutComm::rank() == 0) {

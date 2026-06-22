@@ -16,11 +16,21 @@
 
 #if BOUT_HAS_ADIOS2
 
+#include "bout/array.hxx"
+#include "bout/bout_types.hxx"
 #include "bout/boutexception.hxx"
+#include "bout/utils.hxx"
 
 #include <adios2.h>
 #include <memory>
 #include <mpi.h>
+#include <string>
+#include <vector>
+
+class Field2D;
+class Field3D;
+class FieldPerp;
+class Mesh;
 
 namespace bout {
 
@@ -34,6 +44,36 @@ using IOPtr = std::shared_ptr<adios2::IO>;
 
 ADIOSPtr GetADIOSPtr();
 IOPtr GetIOPtr(const std::string IOName);
+
+inline const std::vector<std::string> ADIOS_DIMS_X = {"x"};
+inline const std::vector<std::string> ADIOS_DIMS_XY = {"x", "y"};
+inline const std::vector<std::string> ADIOS_DIMS_XZ = {"x", "z"};
+inline const std::vector<std::string> ADIOS_DIMS_XYZ = {"x", "y", "z"};
+
+// Helper class to construct ADIOS hyperslices for BOUT++ distributed data
+struct ADIOSSelection {
+  // Offset of this processor's data into the global array
+  adios2::Dims start;
+  // The size of the mapped region
+  adios2::Dims count;
+  // Where the actual data starts in data pointer (to exclude ghost cells)
+  adios2::Dims mem_start;
+  // The actual size of data pointer in memory (including ghost cells)
+  adios2::Dims mem_count;
+  // Global shape, including boundaries but not guard cells
+  adios2::Dims shape;
+  // Shape of the local variable to read into
+  std::vector<int> dims;
+
+  // Distributed Field/Array/Matrix/Tensor
+  bool should_set_selection{false};
+
+  ADIOSSelection(const std::vector<std::string>& dim_names,
+                 const std::vector<int>& dim_sizes, const Mesh& mesh);
+
+  auto selection() const { return adios2::Box<adios2::Dims>{start, count}; }
+  auto memorySelection() const { return adios2::Box<adios2::Dims>{mem_start, mem_count}; }
+};
 
 class ADIOSStream {
 public:
@@ -108,8 +148,7 @@ public:
   }
 
 private:
-  ADIOSStream(const std::string& fname, adios2::Mode mode,
-              const std::string& engineType)
+  ADIOSStream(const std::string& fname, adios2::Mode mode, const std::string& engineType)
       : fname(fname), file_mode(mode) {
 
     ADIOSPtr adiosp = GetADIOSPtr();
@@ -133,6 +172,29 @@ private:
 /** Set user parameters for an IO group */
 void ADIOSSetParameters(const std::string& input, char delimKeyValue, char delimItem,
                         adios2::IO& io);
+
+void adiosPut(ADIOSStream& stream, const std::string& name, bool value);
+void adiosPut(ADIOSStream& stream, const std::string& name, int value);
+void adiosPut(ADIOSStream& stream, const std::string& name, BoutReal value);
+void adiosPut(ADIOSStream& stream, const std::string& name, const std::string& value);
+void adiosPut(ADIOSStream& stream, const std::string& name, const Array<int>& value);
+void adiosPut(ADIOSStream& stream, const std::string& name, const Array<BoutReal>& value);
+void adiosPut(ADIOSStream& stream, const std::string& name, const Matrix<int>& value);
+void adiosPut(ADIOSStream& stream, const std::string& name,
+              const Matrix<BoutReal>& value);
+void adiosPut(ADIOSStream& stream, const std::string& name, const Tensor<int>& value);
+void adiosPut(ADIOSStream& stream, const std::string& name,
+              const Tensor<BoutReal>& value);
+void adiosPut(ADIOSStream& stream, const std::string& name, const Field2D& value);
+void adiosPut(ADIOSStream& stream, const std::string& name, const Field3D& value);
+void adiosPut(ADIOSStream& stream, const std::string& name, const FieldPerp& value);
+
+void adiosGet(adios2::IO& io, adios2::Engine& reader, const std::string& name,
+              Field2D& value);
+void adiosGet(adios2::IO& io, adios2::Engine& reader, const std::string& name,
+              Field3D& value);
+void adiosGet(adios2::IO& io, adios2::Engine& reader, const std::string& name,
+              FieldPerp& value);
 
 } // namespace bout
 
