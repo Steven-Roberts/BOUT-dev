@@ -119,7 +119,7 @@ public:
     if (not engine_) {
       engine_ = io.Open(fname, file_mode);
       if (not engine_) {
-        throw BoutException("Could not open ADIOS file '{:s}' for writing", fname);
+        throw BoutException("Could not open ADIOS file '{:s}'", fname);
       }
     }
     return engine_;
@@ -142,24 +142,15 @@ public:
 
   void finish() {
     if (engine_) {
-      engine().EndStep();
-      engine().Close();
+      endStep();
+      close();
     }
   }
 
-private:
-  ADIOSStream(const std::string& fname, adios2::Mode mode, const std::string& engineType)
-      : fname(fname), file_mode(mode) {
+  void close();
 
-    ADIOSPtr adiosp = GetADIOSPtr();
-    std::string ioname = "write_" + fname;
-    try {
-      io = adiosp->AtIO(ioname);
-    } catch (const std::invalid_argument& e) {
-      io = adiosp->DeclareIO(ioname);
-      io.SetEngine(engineType);
-    }
-  };
+private:
+  ADIOSStream(const std::string& fname, adios2::Mode mode, const std::string& engineType);
 
   std::string fname;
   adios2::Mode file_mode;
@@ -173,7 +164,6 @@ private:
 void ADIOSSetParameters(const std::string& input, char delimKeyValue, char delimItem,
                         adios2::IO& io);
 
-void adiosPut(ADIOSStream& stream, const std::string& name, bool value);
 void adiosPut(ADIOSStream& stream, const std::string& name, int value);
 void adiosPut(ADIOSStream& stream, const std::string& name, BoutReal value);
 void adiosPut(ADIOSStream& stream, const std::string& name, const std::string& value);
@@ -195,6 +185,9 @@ void adiosGet(adios2::IO& io, adios2::Engine& reader, const std::string& name,
               Field3D& value);
 void adiosGet(adios2::IO& io, adios2::Engine& reader, const std::string& name,
               FieldPerp& value);
+void adiosGet(ADIOSStream& stream, const std::string& name, Field2D& value);
+void adiosGet(ADIOSStream& stream, const std::string& name, Field3D& value);
+void adiosGet(ADIOSStream& stream, const std::string& name, FieldPerp& value);
 
 } // namespace bout
 

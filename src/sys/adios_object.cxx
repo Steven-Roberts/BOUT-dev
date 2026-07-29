@@ -31,6 +31,17 @@ static ADIOSPtr adios = nullptr;
 static std::unordered_map<std::string, ADIOSStream> adiosStreams;
 
 namespace {
+bool isReadMode(adios2::Mode mode) {
+  return mode == adios2::Mode::Read or mode == adios2::Mode::ReadRandomAccess;
+}
+
+auto streamKey(const std::string& fname, adios2::Mode mode) -> std::string {
+  if (isReadMode(mode)) {
+    return fname + ":read";
+  }
+  return fname + ":write";
+}
+
 using bout::utils::tuple_index_sequence;
 
 template <class Tuple, std::size_t... I>
@@ -199,23 +210,42 @@ IOPtr GetIOPtr(const std::string IOName) {
   return io;
 }
 
-ADIOSStream::~ADIOSStream() {
+ADIOSStream::~ADIOSStream() { close(); }
+
+ADIOSStream& ADIOSStream::ADIOSGetStream(const std::string& fname, adios2::Mode mode,
+                                         const std::string& engineType) {
+  const auto key = streamKey(fname, mode);
+  auto it = adiosStreams.find(key);
+  if (it == adiosStreams.end()) {
+    it = adiosStreams.emplace(key, ADIOSStream(fname, mode, engineType)).first;
+  }
+  return it->second;
+}
+
+ADIOSStream::ADIOSStream(const std::string& fname, adios2::Mode mode,
+                         const std::string& engineType)
+    : fname(fname), file_mode(mode) {
+
+  ADIOSPtr adiosp = GetADIOSPtr();
+  try {
+    io = adiosp->AtIO(fname);
+  } catch (const std::invalid_argument& e) {
+    io = adiosp->DeclareIO(fname);
+    if (not isReadMode(mode)) {
+      io.SetEngine(engineType);
+    }
+  }
+}
+
+void ADIOSStream::close() {
   if (engine_) {
     if (isInStep) {
       engine_.EndStep();
       isInStep = false;
     }
     engine_.Close();
+    engine_ = adios2::Engine();
   }
-}
-
-ADIOSStream& ADIOSStream::ADIOSGetStream(const std::string& fname, adios2::Mode mode,
-                                         const std::string& engineType) {
-  auto it = adiosStreams.find(fname);
-  if (it == adiosStreams.end()) {
-    it = adiosStreams.emplace(fname, ADIOSStream(fname, mode, engineType)).first;
-  }
-  return it->second;
 }
 
 void ADIOSSetParameters(const std::string& input, char delimKeyValue, char delimItem,
@@ -245,14 +275,6 @@ void ADIOSSetParameters(const std::string& input, char delimKeyValue, char delim
     }
     io.SetParameter(key, value);
   }
-}
-
-void adiosPut(ADIOSStream& stream, const std::string& name, bool value) {
-  // Scalars are only written from processor 0
-  if (BoutComm::rank() != 0) {
-    return;
-  }
-  stream.engine().Put(stream.GetValueVariable<int>(name), static_cast<int>(value));
 }
 
 void adiosPut(ADIOSStream& stream, const std::string& name, int value) {
@@ -374,6 +396,18 @@ void adiosGet(adios2::IO& io, adios2::Engine& reader, const std::string& name,
   var.SetSelection(selection.selection());
   var.SetMemorySelection(selection.memorySelection());
   reader.Get<BoutReal>(var, &value(0, 0), adios2::Mode::Sync);
+}
+
+void adiosGet(ADIOSStream& stream, const std::string& name, Field2D& value) {
+  adiosGet(stream.io, stream.engine(), name, value);
+}
+
+void adiosGet(ADIOSStream& stream, const std::string& name, Field3D& value) {
+  adiosGet(stream.io, stream.engine(), name, value);
+}
+
+void adiosGet(ADIOSStream& stream, const std::string& name, FieldPerp& value) {
+  adiosGet(stream.io, stream.engine(), name, value);
 }
 
 } // namespace bout
