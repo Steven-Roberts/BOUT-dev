@@ -87,7 +87,10 @@ given in table :numref:`tab-solveropts`.
    +--------------------------+--------------------------------------------+-------------------------------------+
    | adaptive                 | Adapt timestep? (Y/N)                      | rk4, imexbdf2                       |
    +--------------------------+--------------------------------------------+-------------------------------------+
-   | use\_precon              | Use a preconditioner? (Y/N)                | pvode, cvode, ida, imexbdf2         |
+   | use\_precon              | Use a preconditioner? (Y/N)                | pvode, ida, imexbdf2                |
+   +--------------------------+--------------------------------------------+-------------------------------------+
+   | cvode\_precon\_method    | CVODE preconditioner: none, auto, user,   | cvode                               |
+   |                          | petsc, or bbd                              |                                     |
    +--------------------------+--------------------------------------------+-------------------------------------+
    | mudq, mldq               | BBD preconditioner settings                | pvode, cvode, ida                   |
    +--------------------------+--------------------------------------------+-------------------------------------+
@@ -170,6 +173,31 @@ many iterations are needed to solve the linear system. If the number of
 iterations becomes large, this may be an indication that the system is
 poorly conditioned, and a preconditioner might help improve performance.
 See :ref:`sec-preconditioning`.
+
+CVODE preconditioning is controlled using ``solver:cvode_precon_method``:
+
+- ``none`` (default): Disable preconditioning.
+- ``auto``: Prefer a user-supplied preconditioner if provided, then PETSc
+  coloring if PETSc is available, otherwise use BBD.
+- ``user``: Require a user-supplied preconditioner.
+- ``petsc``: Require PETSc and use PETSc coloring.
+- ``bbd``: Force the built-in BBD preconditioner.
+
+For ``cvode_precon_method = petsc``, PETSc options for the internal KSP/PC can be
+set with the prefix ``cvode_petscpre_`` (either on the command line, or by putting
+prefixed keys into the ``[petsc]`` section). For example::
+
+    [petsc]
+    cvode_petscpre_ksp_type = preonly
+    cvode_petscpre_pc_type = hypre
+
+Two CVODE heuristics that control when the linear solver setup routine is called,
+and when the Jacobian/preconditioner are recomputed, can be adjusted with:
+
+- ``cvode_lsetup_frequency`` (default ``0``): Passed to ``CVodeSetLSetupFrequency``.
+  ``0`` uses the SUNDIALS default.
+- ``cvode_jac_eval_frequency`` (default ``0``): Passed to ``CVodeSetJacEvalFrequency``.
+  ``0`` uses the SUNDIALS default.
 
 CVODE can set constraints to keep some quantities positive, non-negative,
 negative or non-positive. These constraints can be activated by setting the
@@ -747,6 +775,34 @@ Setting ``solver:force_symmetric_coloring = true``, will make sure
 that the jacobian colouring matrix is symmetric.  This will often
 include a few extra non-zeros that the stencil will miss otherwise
 
+
+Variable Scaling
+~~~~~~~~~~~~~~~~
+
+There may be differences of many orders of magnitude between your
+variables or within variables across the domain. This can result in a
+particular area of the domain for a particular variable dominating the
+residual in the nonlinear solve because its residual has the largest
+absolute value, even if not the largest relative value. As a
+consequence, tighter tolerances will be needed to ensure other
+variables and parts of the domain are solved to sufficient
+accuracy. The ``scale_vars`` option can help address this by
+renormalising all variables to be of order unity across the entire
+domain.
+
+.. code-block:: ini
+
+   scale_vars = true
+   rescale_period = 30  # Maximum number of time-steps taken before rescaling the variables
+   rescale_threshold = 100.  # Approximate overall change to variables permitted before rescaling
+
+It has been found that scaling variables in this way allows
+simulations to run with much looser tolerances than would otherwise be
+possible (e.g., ``rtol = 1e-5`` and ``atol = 1e-3``). Four-times
+speedups have been observed by doing this. Once a steady-state has
+been reached the simulation can be run for a further few time-steps
+with tighter tolerances to improve the accuracy.
+
 Diagnostics and Monitoring
 ---------------------------
 
@@ -764,6 +820,10 @@ When ``equation_form = pseudo_transient``, the solver saves additional diagnosti
 
 These can be visualized to understand convergence behavior and identify
 problematic regions.
+
+The residuals from the last nonlinear solve are also saved with names
+``resid_<var name>``. Plotting these can help to understand which
+variables and parts of the domain are controlling convergence.
 
 Summary of solver options
 ~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1189,7 +1249,7 @@ then in the ``BOUT.inp`` settings file switch on the preconditioner
 
     [solver]
     type = cvode          # Need CVODE or PETSc
-    use_precon = true     # Use preconditioner
+    cvode_precon_method = user   # Use user-supplied preconditioner
     rightprec = false     # Use Right preconditioner (default left)
 
 Jacobian function
@@ -1401,28 +1461,33 @@ This may in some cases be less efficient.
 Implementation internals
 ------------------------
 
+.. todo:: Update these docs for modern API
+
 The solver is the interface between BOUT++ and the time-integration
-code such as SUNDIALS. All solvers implement the `Solver`
-class interface (see ``src/solver/generic_solver.hxx``).
+code such as SUNDIALS. All solvers implement the `Solver` class
+interface.
 
 First all the fields which are to be evolved need to be added to the
-solver. These are always done in pairs, the first specifying the field,
-and the second the time-derivative::
+solver with `Solver::add`::
 
-    void add(Field2D &v, Field2D &F_v, const char* name);
+    virtual void add(Field2D &v, const std::string& name);
 
-This is normally called in the `PhysicsModel::init` initialisation routine.
-Some solvers (e.g. IDA) can support constraints, which need to be added
-in the same way as evolving fields::
+This is normally called in the `PhysicsModel::init` initialisation
+routine. This is a virtual function so that individual solver
+implementations can keep track of additional information if required.
 
-    bool constraints();
-    void constraint(Field2D &v, Field2D &C_v, const char* name);
+Some solvers (e.g. IDA) can support constraints, which need
+to be added in the same way as evolving fields::
 
-The ``constraints()`` function tests whether or not the current solver
-supports constraints. The format of ``constraint(...)`` is the same as
-``add``, except that now the solver will attempt to make ``C_v`` zero.
-If ``constraint`` is called when the solver doesn’t support them then an
-error should occur.
+    virtual bool constraints();
+    virtual void constraint(Field2D &v, Field2D &C_v, std::string name);
+
+The `Solver::constraints` function tests whether or not the current
+solver supports constraints. The format of `Solver::constraint`
+similar to `Solver::add`, except that it takes a second argument,
+``C_v``, which the solver will attempt to make zero. If ``constraint``
+is called when the solver doesn’t support them then an error will
+occur.
 
 If the physics model implements a preconditioner or Jacobian-vector
 multiplication routine, these can be passed to the solver during
@@ -1439,23 +1504,16 @@ be ignored.
 Once the problem to be solved has been specified, the solver can be
 initialised using::
 
-    int init();
+    virtual int init();
 
-which returns an error code (0 on success). This is currently called in
-:doc:`bout++.cxx<../_breathe_autogen/file/bout_09_09_8cxx>`::
+which returns an error code (0 on success). This is function is
+essential for implementations that must allocate memory based on the
+total number of fields being evolved, as this won't be known until
+after all calls to `Solver::add` and `Solver::constraint` have been
+handled. One of the very first things overrides for ``init`` should do
+is to call the base implementation `Solver::init` to handle the
+generic initialisation.
 
-    if (solver.init()) {
-      output.write("Failed to initialise solver. Aborting\n");
-      return(1);
-    }
-
-which passes the (physics module) RHS function `PhysicsModel::rhs` to the
-solver along with the number and size of the output steps.
-
-::
-
-    typedef int (*MonitorFunc)(BoutReal simtime, int iter, int NOUT);
-    int run(MonitorFunc f);
 
 .. [1]
    Taken from a talk by L.Chacon available here

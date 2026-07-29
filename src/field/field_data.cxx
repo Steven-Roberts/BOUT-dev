@@ -53,11 +53,6 @@ FieldData::FieldData(Mesh* localmesh, CELL_LOC location_in)
           location_in, fieldmesh)) { // Need to check for nullptr again, because the
                                      // fieldmesh might still be
   // nullptr if the global mesh hasn't been initialized yet
-  if (fieldmesh != nullptr) {
-    // sets fieldCoordinates by getting Coordinates for our location from
-    // fieldmesh
-    getCoordinates();
-  }
 }
 
 FieldData::FieldData(const FieldData& other) {
@@ -154,7 +149,7 @@ void FieldData::setBoundary(const std::string& name) {
   /// Get the mesh boundary regions
   /// Loop over the mesh parallel boundary regions
   for (const auto& reg : mesh->getBoundariesPar()) {
-    auto* op = dynamic_cast<BoundaryOpPar*>(bfact->createFromOptions(name, reg.get()));
+    auto* op = dynamic_cast<BoundaryOpPar*>(bfact->createFromOptions(name, reg));
     if (op != nullptr) {
       bndry_op_par.push_back(op);
     }

@@ -25,8 +25,10 @@
  *
  **************************************************************************/
 
+#include "bout/array.hxx"
 #include "bout/bout_types.hxx"
 #include "bout/build_defines.hxx"
+#include "bout/field2d.hxx"
 
 #include "bout/index_derivs_interface.hxx"
 #include <bout/boutcomm.hxx>
@@ -37,6 +39,7 @@
 #include <cstddef>
 #include <memory>
 #include <optional>
+#include <string>
 #include <utility>
 
 #include "bout/parallel_boundary_op.hxx"
@@ -51,7 +54,9 @@
 #include <bout/fft.hxx>
 #include <bout/field3d.hxx>
 #include <bout/interpolation.hxx>
+#include <bout/mesh.hxx>
 #include <bout/output.hxx>
+#include <bout/region.hxx>
 #include <bout/utils.hxx>
 
 #include "fmt/format.h"
@@ -64,7 +69,7 @@ Field3D::Field3D(Mesh* localmesh, CELL_LOC location_in, DirectionTypes direction
   name = "<F3D>";
 #endif
 
-  if (fieldmesh) {
+  if (fieldmesh != nullptr) {
     nx = fieldmesh->LocalNx;
     ny = fieldmesh->LocalNy;
     nz = fieldmesh->LocalNz;
@@ -76,25 +81,51 @@ Field3D::Field3D(Mesh* localmesh, CELL_LOC location_in, DirectionTypes direction
 Field3D::Field3D(const Field3D& f)
     : Field(f), data(f.data), yup_fields(f.yup_fields), ydown_fields(f.ydown_fields),
       regionID(f.regionID) {
-
-  if (fieldmesh) {
+  if (fieldmesh != nullptr) {
     nx = fieldmesh->LocalNx;
     ny = fieldmesh->LocalNy;
     nz = fieldmesh->LocalNz;
   }
 }
 
-Field3D::Field3D(const Field2D& f) : Field(f) {
+Field3D operator+(const Field2D& lhs, const Field3DParallel& rhs) {
+  return lhs + rhs.asField3D();
+}
 
-  nx = fieldmesh->LocalNx;
-  ny = fieldmesh->LocalNy;
-  nz = fieldmesh->LocalNz;
+Field3D operator-(const Field2D& lhs, const Field3DParallel& rhs) {
+  return lhs - rhs.asField3D();
+}
 
+Field3D operator*(const Field2D& lhs, const Field3DParallel& rhs) {
+  return lhs * rhs.asField3D();
+}
+
+Field3D operator/(const Field2D& lhs, const Field3DParallel& rhs) {
+  return lhs / rhs.asField3D();
+}
+
+Field3D operator+(const Field3DParallel& lhs, const Field2D& rhs) {
+  return lhs.asField3D() + rhs;
+}
+
+Field3D operator-(const Field3DParallel& lhs, const Field2D& rhs) {
+  return lhs.asField3D() - rhs;
+}
+
+Field3D operator*(const Field3DParallel& lhs, const Field2D& rhs) {
+  return lhs.asField3D() * rhs;
+}
+
+Field3D operator/(const Field3DParallel& lhs, const Field2D& rhs) {
+  return lhs.asField3D() / rhs;
+}
+
+Field3D::Field3D(const Field2D& f)
+    : Field(f), nx(fieldmesh->LocalNx), ny(fieldmesh->LocalNy), nz(fieldmesh->LocalNz) {
   *this = f;
 }
 
 Field3D::Field3D(const BoutReal val, Mesh* localmesh) : Field3D(localmesh) {
-
   *this = val;
 }
 
@@ -113,27 +144,25 @@ Field3DParallel::Field3DParallel(const BoutReal val, Mesh* localmesh)
 
 Field3D::Field3D(Array<BoutReal> data_in, Mesh* localmesh, CELL_LOC datalocation,
                  DirectionTypes directions_in)
-    : Field(localmesh, datalocation, directions_in), data(std::move(data_in)) {
-
-  nx = fieldmesh->LocalNx;
-  ny = fieldmesh->LocalNy;
-  nz = fieldmesh->LocalNz;
+    : Field(localmesh, datalocation, directions_in), nx(fieldmesh->LocalNx),
+      ny(fieldmesh->LocalNy), nz(fieldmesh->LocalNz), data(std::move(data_in)) {
 
   ASSERT1(data.size() == nx * ny * nz);
 }
 
-Field3D::~Field3D() { delete deriv; }
-
 Field3D& Field3D::allocate() {
   if (data.empty()) {
-    if (!fieldmesh) {
+    if (fieldmesh == nullptr) {
       // fieldmesh was not initialized when this field was initialized, so use
       // the global mesh and set some members to default values
       fieldmesh = bout::globals::mesh;
-      nx = fieldmesh->LocalNx;
-      ny = fieldmesh->LocalNy;
-      nz = fieldmesh->LocalNz;
     }
+    nx = fieldmesh->LocalNx;
+    ny = fieldmesh->LocalNy;
+    nz = fieldmesh->LocalNz;
+    ASSERT1(nx > 0);
+    ASSERT1(ny > 0);
+    ASSERT1(nz > 0);
     data.reallocate(nx * ny * nz);
 #if CHECK > 2
     invalidateGuards(*this);
@@ -276,27 +305,6 @@ Field3D& Field3D::operator=(const Field3D& rhs) {
   nz = rhs.nz;
 
   data = rhs.data;
-
-  return *this;
-}
-
-Field3D& Field3D::operator=(Field3D&& rhs) noexcept {
-  track(rhs, "operator=");
-
-  // Move parallel slices or delete existing ones.
-  yup_fields = std::move(rhs.yup_fields);
-  ydown_fields = std::move(rhs.ydown_fields);
-
-  // Move the data and data sizes
-  nx = rhs.nx;
-  ny = rhs.ny;
-  nz = rhs.nz;
-  regionID = rhs.regionID;
-
-  data = std::move(rhs.data);
-
-  // Move base slice last
-  Field::operator=(std::move(rhs));
 
   return *this;
 }
@@ -611,7 +619,7 @@ void Field3D::applyParallelBoundary(const std::string& condition) {
   /// Loop over the mesh boundary regions
   for (const auto& reg : fieldmesh->getBoundariesPar()) {
     auto op = std::unique_ptr<BoundaryOpPar>{
-        dynamic_cast<BoundaryOpPar*>(bfact->create(condition, reg.get()))};
+        dynamic_cast<BoundaryOpPar*>(bfact->create(condition, reg))};
     op->apply(*this);
   }
 }
@@ -634,7 +642,7 @@ void Field3D::applyParallelBoundary(const std::string& region,
   for (const auto& reg : fieldmesh->getBoundariesPar()) {
     if (reg->label == region) {
       auto op = std::unique_ptr<BoundaryOpPar>{
-          dynamic_cast<BoundaryOpPar*>(bfact->create(condition, reg.get()))};
+          dynamic_cast<BoundaryOpPar*>(bfact->create(condition, reg))};
       op->apply(*this);
       break;
     }
@@ -661,7 +669,7 @@ void Field3D::applyParallelBoundary(const std::string& region,
       // BoundaryFactory can't create boundaries using Field3Ds, so get temporary
       // boundary of the right type
       auto tmp = std::unique_ptr<BoundaryOpPar>{
-          dynamic_cast<BoundaryOpPar*>(bfact->create(condition, reg.get()))};
+          dynamic_cast<BoundaryOpPar*>(bfact->create(condition, reg))};
       // then clone that with the actual argument
       auto op = std::unique_ptr<BoundaryOpPar>{tmp->clone(reg.get(), f)};
       op->apply(*this);
@@ -675,8 +683,6 @@ void Field3D::swapData(Field3D& other) { std::swap(data, other.data); }
 /***************************************************************
  *               NON-MEMBER OVERLOADED OPERATORS
  ***************************************************************/
-
-Field3D operator-(const Field3D& f) { return -1.0 * f; }
 
 //////////////// NON-MEMBER FUNCTIONS //////////////////
 
@@ -910,13 +916,27 @@ bool operator==(const Field3D& a, const Field3D& b) {
   if (!a.isAllocated() || !b.isAllocated()) {
     return false;
   }
-  return min(abs(a - b)) < 1e-10;
+  Field3D Sub = a - b;
+  return min(Sub) < 1e-10;
 }
 
 std::ostream& operator<<(std::ostream& out, const Field3D& value) {
   out << toString(value);
   return out;
 }
+
+namespace bout::detail {
+
+const Region<Ind3D>& getField3DRegion(const Mesh* mesh, std::optional<size_t> regionID) {
+  ASSERT1(mesh != nullptr);
+
+  if (regionID.has_value()) {
+    return mesh->getRegion(regionID.value());
+  }
+  return mesh->getRegion("RGN_ALL");
+}
+
+} // namespace bout::detail
 
 void swap(Field3D& first, Field3D& second) noexcept {
   using std::swap;

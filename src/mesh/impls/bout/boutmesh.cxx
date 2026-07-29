@@ -94,11 +94,6 @@ BoutMesh::~BoutMesh() {
   // Delete the communication handles
   clear_handles();
 
-  // Delete the boundary regions
-  for (const auto& bndry : boundary) {
-    delete bndry;
-  }
-
   if (comm_x != MPI_COMM_NULL) {
     MPI_Comm_free(&comm_x);
   }
@@ -273,7 +268,11 @@ void BoutMesh::chooseProcessorSplit(Options& options) {
           _f("Number of processors ({:d}) not divisible by NPs in x direction ({:d})\n"),
           NPES, NXPE);
     }
-
+    if ((nx - 2 * MXG) % NXPE != 0) {
+      throw BoutException(
+          _f("Number of x points ({:d}) not divisible by NPs in x direction ({:d})\n"),
+          nx - 2 * MXG, NXPE);
+    }
     NYPE = NPES / NXPE;
   } else {
     // NXPE not set, but NYPE is
@@ -286,7 +285,11 @@ void BoutMesh::chooseProcessorSplit(Options& options) {
           _f("Number of processors ({:d}) not divisible by NPs in y direction ({:d})\n"),
           NPES, NYPE);
     }
-
+    if (ny % NYPE != 0) {
+      throw BoutException(
+          _f("Number of y points ({:d}) not divisible by NPs in y direction ({:d})\n"),
+          nx, NXPE);
+    }
     NXPE = NPES / NYPE;
   }
 
@@ -1169,7 +1172,9 @@ std::set<std::string> BoutMesh::getPossibleBoundaries() const {
         auto boundaries = mesh_copy.getBoundaries();
         std::transform(boundaries.begin(), boundaries.end(),
                        std::inserter(all_boundaries, all_boundaries.begin()),
-                       [](BoundaryRegionBase* boundary) { return boundary->label; });
+                       [](const std::shared_ptr<BoundaryRegionBase>& boundary) {
+                         return boundary->label;
+                       });
       };
 
   // This is sufficient to get the SOL boundary, if it exists
@@ -2573,9 +2578,8 @@ bool BoutMesh::periodicY(int jx, BoutReal& ts) const {
 int BoutMesh::numberOfYBoundaries() const {
   if (jyseps2_1 != jyseps1_2) {
     return 2;
-  } else {
-    return 1;
   }
+  return 1;
 }
 
 std::pair<bool, BoutReal> BoutMesh::hasBranchCutLower(int jx) const {
@@ -3242,7 +3246,9 @@ RangeIterator BoutMesh::iterateBndryUpperY() const {
   return RangeIterator(xs, xe);
 }
 
-std::vector<BoundaryRegionBase*> BoutMesh::getBoundaries() { return boundary; }
+std::vector<std::shared_ptr<BoundaryRegionBase>> BoutMesh::getBoundaries() const {
+  return boundary;
+}
 
 using bout::boundary::BoundaryRegionFCI;
 std::vector<std::shared_ptr<BoundaryRegionFCI>>
